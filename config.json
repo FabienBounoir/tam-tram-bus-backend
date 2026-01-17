@@ -1,0 +1,53 @@
+{
+  "agencies": [
+    {
+      "url": "https://data.montpellier3m.fr/GTFS/Urbain/GTFS.zip",
+      "realtimeAlerts": {
+        "url": "https://data.montpellier3m.fr/GTFS/Urbain/Alert.pb"
+      },
+      "realtimeTripUpdates": {
+        "url": "https://data.montpellier3m.fr/GTFS/Urbain/TripUpdate.pb"
+      },
+      "realtimeVehiclePositions": {
+        "url": "https://data.montpellier3m.fr/GTFS/Urbain/VehiclePosition.pb"
+      },
+      "exclude": [
+        "areas",
+        "attributions",
+        "booking_rules",
+        "calendar",
+        "fare_attributes",
+        "fare_leg_rules",
+        "fare_media",
+        "fare_products",
+        "fare_rules",
+        "feed_info",
+        "frequencies",
+        "location_group_stops",
+        "fare_transfer_rules",
+        "levels",
+        "location_groups",
+        "locations",
+        "networks",
+        "pathways",
+        "rider_categories",
+        "route_networks",
+        "shapes",
+        "stop_areas",
+        "timeframes",
+        "translations",
+        "zone_groups",
+        "zones"
+      ]
+    }
+  ],
+  "csvOptions": {
+    "skip_lines_with_error": true
+  },
+  "downloadTimeout": 10000,
+  "ignoreDuplicates": false,
+  "ignoreErrors": false,
+  "gtfsRealtimeExpirationSeconds": false,
+  "sqlitePath": "/Users/fabienbounoir/Documents/project/tam-tram-bus/backend/gtfs.sqlite",
+  "exportPath": "/Users/fabienbounoir/Documents/project/tam-tram-bus/backend"
+}

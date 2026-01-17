@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>GTFS Debug UI</title>
+    <style>
+      body {
+        font-family:
+          system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          Ubuntu,
+          'Helvetica Neue',
+          Arial;
+        margin: 16px;
+      }
+      h2 {
+        margin-top: 24px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      input[type='text'] {
+        padding: 6px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        width: 320px;
+      }
+      button {
+        padding: 6px 10px;
+        border-radius: 4px;
+        border: 1px solid #888;
+        background: #f3f3f3;
+        cursor: pointer;
+      }
+      pre {
+        background: #111;
+        color: #0f0;
+        padding: 8px;
+        border-radius: 6px;
+        overflow: auto;
+        max-height: 360px;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        margin-top: 8px;
+      }
+      th,
+      td {
+        border: 1px solid #ddd;
+        padding: 6px;
+        text-align: left;
+      }
+      .small {
+        font-size: 13px;
+        color: #666;
+      }
+      .section {
+        border: 1px solid #eee;
+        padding: 12px;
+        border-radius: 8px;
+        margin-bottom: 16px;
+      }
+      #map {
+        height: 420px;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        margin-top: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>GTFS Debug UI</h1>
+    <p class="small">
+      Page de debug simple pour appeler vos endpoints et voir les données. L'UI appelle les
+      endpoints sur le même hôte (http://localhost:3333).
+    </p>
+
+    <div class="section">
+      <h2>1) Rechercher arrêts par nom</h2>
+      <div class="row">
+        <input id="q-stop-name" type="text" value="Place de l'Europe" />
+        <button id="btn-find-stops">Find stops</button>
+        <button id="btn-find-stops-near">Find stops near (using lat/lon)</button>
+      </div>
+      <div id="stops-result"></div>
+    </div>
+
+    <div class="section">
+      <h2>2) Obtenir les lignes pour un stop_id</h2>
+      <div class="row">
+        <input id="q-stop-id" type="text" placeholder="stop_id (ex: 1092)" />
+        <button id="btn-get-routes">Get routes</button>
+      </div>
+      <div id="routes-result"></div>
+    </div>
+
+    <div class="section">
+      <h2>3) Récupérer stop_id(s) pour nom + ligne</h2>
+      <div class="row">
+        <input id="q-name-for-route" type="text" value="Place de l'Europe" />
+        <input id="q-route-short" type="text" placeholder="route_short_name (ex: T1 or 14)" />
+        <button id="btn-get-stop-ids">Find stop ids</button>
+      </div>
+      <div id="stopids-result"></div>
+    </div>
+
+    <div class="section">
+      <h2>4) Prochains passages pour un stop_id</h2>
+      <div class="row">
+        <input id="q-next-stop-id" type="text" placeholder="stop_id (ex: 1092)" />
+        <input id="q-next-limit" type="text" placeholder="limit" style="width: 80px" value="10" />
+        <button id="btn-next-departures">Get next departures</button>
+      </div>
+      <div id="next-result"></div>
+    </div>
+
+    <div class="section">
+      <h2>5) Recherche d'arrêts proches</h2>
+      <div class="row">
+        <input id="q-lat" type="text" placeholder="lat" value="43.60735" />
+        <input id="q-lon" type="text" placeholder="lon" value="3.89395" />
+        <input id="q-radius" type="text" placeholder="radius km" value="0.5" style="width: 80px" />
+        <button id="btn-stops-near">Search</button>
+      </div>
+      <div id="near-result"></div>
+    </div>
+
+    <div class="section">
+      <h2>6) Récupérer shape</h2>
+      <div class="row">
+        <input id="q-shape-id" type="text" placeholder="shape_id" />
+        <button id="btn-get-shape">Get shape</button>
+      </div>
+      <div id="shape-result"></div>
+    </div>
+
+    <div class="section">
+      <h2>7) Shapes (list & map)</h2>
+      <div class="row">
+        <button id="btn-load-shapes">Load shapes</button>
+        <select id="shapes-select" style="min-width: 240px"></select>
+        <button id="btn-show-shape">Show selected</button>
+      </div>
+      <div id="shapes-list"></div>
+      <div id="map"></div>
+    </div>
+
+    <script>
+      // Leaflet (loaded dynamically)
+      const leafletCss = document.createElement('link')
+      leafletCss.rel = 'stylesheet'
+      leafletCss.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
+      document.head.appendChild(leafletCss)
+      const leafletScript = document.createElement('script')
+      leafletScript.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
+      document.head.appendChild(leafletScript)
+
+      const el = (id) => document.getElementById(id)
+
+      let map, mapLayerGroup
+      function ensureMap() {
+        if (typeof globalThis !== 'undefined' && globalThis.L && !map) {
+          map = L.map('map').setView([43.60735, 3.89395], 14)
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap',
+          }).addTo(map)
+          mapLayerGroup = L.layerGroup().addTo(map)
+        }
+      }
+
+      function renderTable(container, rows) {
+        if (!rows || rows.length === 0) {
+          container.innerHTML = '<div class="small">No results</div>'
+          return
+        }
+        const keys = Object.keys(rows[0])
+        let html =
+          '<table><thead><tr>' +
+          keys.map((k) => '<th>' + k + '</th>').join('') +
+          '</tr></thead><tbody>'
+        html += rows
+          .map(
+            (r) =>
+              '<tr>' +
+              keys
+                .map(
+                  (k) =>
+                    '<td>' +
+                    String(
+                      r[k] === null ? '' : typeof r[k] === 'object' ? JSON.stringify(r[k]) : r[k]
+                    ) +
+                    '</td>'
+                )
+                .join('') +
+              '</tr>'
+          )
+          .join('')
+        html += '</tbody></table>'
+        container.innerHTML = html
+      }
+
+      async function fetchJson(url) {
+        try {
+          const res = await fetch(url)
+          return await res.json()
+        } catch (err) {
+          return { error: err.message }
+        }
+      }
+
+      el('btn-find-stops').addEventListener('click', async () => {
+        const name = encodeURIComponent(el('q-stop-name').value)
+        const data = await fetchJson('/api/stops-by-name?name=' + name)
+        if (data.error) el('stops-result').innerText = JSON.stringify(data, null, 2)
+        else
+          renderTable(
+            el('stops-result'),
+            data.stops.map((s) => ({
+              stop_id: s.stop_id,
+              stop_name: s.stop_name,
+              lat: s.stop_lat,
+              lon: s.stop_lon,
+              routes: s.routes.map((r) => r.route_short_name).join(','),
+            }))
+          )
+      })
+
+      el('btn-find-stops-near').addEventListener('click', async () => {
+        const lat = el('q-lat').value
+        const lon = el('q-lon').value
+        const r = el('q-radius').value
+        const data = await fetchJson('/api/stops-near?lat=' + lat + '&lon=' + lon + '&radius=' + r)
+        if (data.error) el('stops-result').innerText = JSON.stringify(data, null, 2)
+        else
+          renderTable(
+            el('stops-result'),
+            data.stops.map((s) => ({
+              stop_id: s.stop_id,
+              stop_name: s.stop_name,
+              lat: s.stop_lat,
+              lon: s.stop_lon,
+              distance_m: Math.round(s.distance_m),
+            }))
+          )
+      })
+
+      el('btn-get-routes').addEventListener('click', async () => {
+        const stopId = el('q-stop-id').value
+        const data = await fetchJson('/api/routes-by-stop?stop_id=' + encodeURIComponent(stopId))
+        if (data.error) el('routes-result').innerText = JSON.stringify(data, null, 2)
+        else
+          renderTable(
+            el('routes-result'),
+            data.routes.map((r) => ({
+              route_short: r.route_short_name,
+              route_long: r.route_long_name,
+              direction: r.direction_id,
+              headsigns: r.trip_headsigns.join('; '),
+              start: r.start_stop_name,
+              end: r.end_stop_name,
+            }))
+          )
+      })
+
+      el('btn-get-stop-ids').addEventListener('click', async () => {
+        const name = encodeURIComponent(el('q-name-for-route').value)
+        const routeShort = el('q-route-short').value
+        const url =
+          '/api/stop-ids-for-name-and-route?name=' +
+          name +
+          '&route_short_name=' +
+          encodeURIComponent(routeShort)
+        const data = await fetchJson(url)
+        if (data.error) el('stopids-result').innerText = JSON.stringify(data, null, 2)
+        else renderTable(el('stopids-result'), data.stops)
+      })
+
+      el('btn-next-departures').addEventListener('click', async () => {
+        const stopId = el('q-next-stop-id').value
+        const lim = el('q-next-limit').value || '10'
+        const data = await fetchJson(
+          '/api/next-departures?stop_id=' +
+            encodeURIComponent(stopId) +
+            '&limit=' +
+            encodeURIComponent(lim)
+        )
+        if (data.error) el('next-result').innerText = JSON.stringify(data, null, 2)
+        else renderTable(el('next-result'), data.departures)
+      })
+
+      el('btn-stops-near').addEventListener('click', async () => {
+        const lat = el('q-lat').value
+        const lon = el('q-lon').value
+        const r = el('q-radius').value
+        const data = await fetchJson(
+          '/api/stops-near?lat=' +
+            encodeURIComponent(lat) +
+            '&lon=' +
+            encodeURIComponent(lon) +
+            '&radius=' +
+            encodeURIComponent(r)
+        )
+        if (data.error) el('near-result').innerText = JSON.stringify(data, null, 2)
+        else
+          renderTable(
+            el('near-result'),
+            data.stops.map((s) => ({
+              stop_id: s.stop_id,
+              stop_name: s.stop_name,
+              lat: s.stop_lat,
+              lon: s.stop_lon,
+              distance_m: Math.round(s.distance_m),
+            }))
+          )
+      })
+
+      el('btn-get-shape').addEventListener('click', async () => {
+        const shapeId = el('q-shape-id').value
+        const data = await fetchJson('/api/shape?shape_id=' + encodeURIComponent(shapeId))
+        if (data.error) el('shape-result').innerText = JSON.stringify(data, null, 2)
+        else
+          renderTable(
+            el('shape-result'),
+            data.points.map((p) => ({ seq: p.seq, lat: p.lat, lon: p.lon }))
+          )
+      })
+
+      // Shapes list & map
+      el('btn-load-shapes').addEventListener('click', async () => {
+        const data = await fetchJson('/api/shapes')
+        if (data.error) {
+          el('shapes-list').innerText = JSON.stringify(data, null, 2)
+          return
+        }
+        if (data.source === 'shapes_table') {
+          renderTable(
+            el('shapes-list'),
+            data.shapes.map((s) => ({ shape_id: s.shape_id, pts_count: s.pts_count }))
+          )
+          const sel = el('shapes-select')
+          sel.innerHTML = ''
+          data.shapes.forEach((s) => {
+            const o = document.createElement('option')
+            o.value = s.shape_id
+            o.text = `${s.shape_id} (${s.pts_count} pts)`
+            sel.appendChild(o)
+          })
+        } else if (data.source === 'generated_shapes') {
+          renderTable(
+            el('shapes-list'),
+            data.shapes.map((s) => ({
+              shape_id: s.shape_id,
+              route_id: s.route_id,
+              direction_id: s.direction_id,
+              created_at: s.created_at,
+            }))
+          )
+          const sel = el('shapes-select')
+          sel.innerHTML = ''
+          data.shapes.forEach((s) => {
+            const o = document.createElement('option')
+            o.value = s.shape_id
+            o.text = `${s.shape_id} (route ${s.route_id} dir ${s.direction_id})`
+            sel.appendChild(o)
+          })
+        } else {
+          el('shapes-list').innerText = 'No shapes available'
+        }
+        ensureMap()
+      })
+
+      async function loadAndShowShapeById(shapeId) {
+        // try shapes table first
+        let ptsResp = await fetchJson('/api/shape?shape_id=' + encodeURIComponent(shapeId))
+        if (ptsResp && !ptsResp.error && ptsResp.points && ptsResp.points.length)
+          return ptsResp.points
+        // fallback: if shapeId encoded as route__direction, call shape-by-route
+        if (shapeId.includes('__')) {
+          const parts = shapeId.split('__')
+          const route = parts[0]
+          const dir = parts[1] === 'null' ? 'null' : parts[1]
+          const resp = await fetchJson(
+            '/api/shape-by-route?route_id=' +
+              encodeURIComponent(route) +
+              '&direction_id=' +
+              encodeURIComponent(dir)
+          )
+          if (resp && !resp.error && resp.points) return resp.points
+        }
+        return []
+      }
+
+      el('btn-show-shape').addEventListener('click', async () => {
+        const sel = el('shapes-select')
+        if (!sel || !sel.value) return
+        const id = sel.value
+        const pts = await loadAndShowShapeById(id)
+        if (!pts || pts.length === 0) {
+          alert('No points for shape')
+          return
+        }
+        ensureMap()
+        mapLayerGroup.clearLayers()
+        const latlngs = pts.map((p) => [Number(p.lat), Number(p.lon)])
+        const poly = L.polyline(latlngs, { color: 'blue' }).addTo(mapLayerGroup)
+        map.fitBounds(poly.getBounds())
+        // add markers for stops
+        pts.forEach((p) => {
+          L.circleMarker([Number(p.lat), Number(p.lon)], { radius: 4, color: '#f00' }).addTo(
+            mapLayerGroup
+          )
+        })
+      })
+
+      // Auto-run initial search
+      document.addEventListener('DOMContentLoaded', () => el('btn-find-stops').click())
+    </script>
+  </body>
+</html>
