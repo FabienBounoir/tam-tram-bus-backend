@@ -1,0 +1,15 @@
+node_modules
+build
+.tmp
+.tmp/**
+.tmp/*
+.npmrc
+.git
+.git/**
+.gitignore
+Dockerfile
+docker-compose.yml
+.env
+.env.*
+coverage
+*.log

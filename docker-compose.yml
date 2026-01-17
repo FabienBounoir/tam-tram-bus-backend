@@ -1,0 +1,15 @@
+services:
+  tam-tram-bus:
+    build: .
+    ports:
+      - '34000:34000'
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 34000
+      HOST: 0.0.0.0
+      TZ: UTC
+    volumes:
+      # - ./gtfs.sqlite:/app/build/gtfs.sqlite
+      - ./config.json:/app/build/config.json

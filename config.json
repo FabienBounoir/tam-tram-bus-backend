@@ -48,6 +48,6 @@
   "ignoreDuplicates": false,
   "ignoreErrors": false,
   "gtfsRealtimeExpirationSeconds": false,
-  "sqlitePath": "/Users/fabienbounoir/Documents/project/tam-tram-bus/backend/gtfs.sqlite",
-  "exportPath": "/Users/fabienbounoir/Documents/project/tam-tram-bus/backend"
+  "sqlitePath": "./gtfs.sqlite",
+  "exportPath": "/tmp"
 }

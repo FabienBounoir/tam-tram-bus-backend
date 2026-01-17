@@ -24,7 +24,28 @@ npm install
 npm run dev
 ```
 
-The server starts on `http://localhost:3333` by default.
+The server starts on `http://localhost:34000` by default.
+
+## Docker 🐳
+
+### Build & run (image)
+
+```bash
+docker build -t tam-tram-bus-backend .
+docker run --rm -p 34000:34000 \
+	-v $(pwd)/gtfs.sqlite:/app/gtfs.sqlite \
+	-v $(pwd)/config.json:/app/config.json \
+	tam-tram-bus-backend
+```
+
+### Run with docker-compose
+
+```bash
+docker compose up --build
+```
+
+Make sure your `.env` file includes `APP_KEY` and `LOG_LEVEL` (required by AdonisJS). If you
+don't have one, copy `.env.example` and fill in the values.
 
 ## Database
 
