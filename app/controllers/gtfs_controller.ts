@@ -35,37 +35,70 @@ export default class GtfsController {
     const name = request.input('name')
     if (!name) return response.badRequest({ error: 'name query param required' })
 
-    const sql = `SELECT s.stop_id, s.stop_name, s.parent_station, s.stop_lat, s.stop_lon,
-        GROUP_CONCAT(DISTINCT r.route_id || '|' || r.route_short_name || '|' || COALESCE(t.direction_id, '')) AS routes_concat
-      FROM stops s
-      JOIN stop_times st USING(stop_id)
-      JOIN trips t USING(trip_id)
-      JOIN routes r USING(route_id)
-      WHERE s.stop_name LIKE ? COLLATE NOCASE
-      GROUP BY s.stop_id, s.stop_name, s.parent_station, s.stop_lat, s.stop_lon
-      ORDER BY s.stop_id`
+    const includeRoutesRaw = request.input('include_routes') ?? request.input('includeRoutes')
+    const includeRoutes =
+      includeRoutesRaw === true ||
+      includeRoutesRaw === 'true' ||
+      includeRoutesRaw === '1' ||
+      includeRoutesRaw === 1
 
-    const rows = await GtfsDb.dbAll(sql, [`%${name}%`])
-    const result = rows.map((r) => {
-      const routes = r.routes_concat
-        ? r.routes_concat.split(',').map((item: string) => {
-            const parts = item.split('|')
-            return {
-              route_id: parts[0],
-              route_short_name: parts[1],
-              direction_id: parts[2] === '' ? null : Number(parts[2]),
-            }
-          })
-        : []
-      return {
-        stop_id: r.stop_id,
-        stop_name: r.stop_name,
-        parent_station: r.parent_station,
-        stop_lat: r.stop_lat,
-        stop_lon: r.stop_lon,
-        routes,
-      }
+    if (!includeRoutes) {
+      const sql = `SELECT stop_id, stop_name, parent_station, stop_lat, stop_lon
+        FROM stops
+        WHERE stop_name LIKE ? COLLATE NOCASE
+        ORDER BY stop_id`
+
+      const rows = await GtfsDb.dbAll(sql, [`%${name}%`])
+      return response.ok({ stops: rows })
+    }
+
+    const stopsSql = `SELECT stop_id, stop_name, parent_station, stop_lat, stop_lon
+      FROM stops
+      WHERE stop_name LIKE ? COLLATE NOCASE
+      ORDER BY stop_id`
+
+    const stopsRows = await GtfsDb.dbAll(stopsSql, [`%${name}%`])
+
+    const routesSql = `WITH base AS (
+        SELECT s.stop_id, r.route_id, r.route_short_name, r.route_long_name, t.direction_id,
+               GROUP_CONCAT(DISTINCT t.trip_headsign) AS headsigns,
+               MIN(t.trip_id) AS rep_trip_id
+        FROM stops s
+        JOIN stop_times st USING(stop_id)
+        JOIN trips t USING(trip_id)
+        JOIN routes r USING(route_id)
+        WHERE s.stop_name LIKE ? COLLATE NOCASE
+        GROUP BY s.stop_id, r.route_id, r.route_short_name, r.route_long_name, t.direction_id
+      )
+      SELECT base.*, 
+        (SELECT stop_name FROM stop_times st2 JOIN stops s2 ON st2.stop_id = s2.stop_id
+         WHERE st2.trip_id = base.rep_trip_id ORDER BY st2.stop_sequence LIMIT 1) AS start_stop_name,
+        (SELECT stop_name FROM stop_times st3 JOIN stops s3 ON st3.stop_id = s3.stop_id
+         WHERE st3.trip_id = base.rep_trip_id ORDER BY st3.stop_sequence DESC LIMIT 1) AS end_stop_name
+      FROM base
+      ORDER BY stop_id`
+
+    const routesRows = await GtfsDb.dbAll(routesSql, [`%${name}%`])
+    const routesByStop = new Map<string, any[]>()
+
+    routesRows.forEach((row) => {
+      const list = routesByStop.get(row.stop_id) ?? []
+      list.push({
+        route_id: row.route_id,
+        route_short_name: row.route_short_name,
+        route_long_name: row.route_long_name || null,
+        direction_id: row.direction_id === null ? null : Number(row.direction_id),
+        headsigns: row.headsigns ? String(row.headsigns).split(',') : [],
+        start_stop_name: row.start_stop_name || null,
+        end_stop_name: row.end_stop_name || null,
+      })
+      routesByStop.set(row.stop_id, list)
     })
+
+    const result = stopsRows.map((stop) => ({
+      ...stop,
+      routes: routesByStop.get(stop.stop_id) ?? [],
+    }))
 
     return response.ok({ stops: result })
   }
