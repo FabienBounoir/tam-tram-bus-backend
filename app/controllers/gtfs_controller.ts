@@ -169,6 +169,7 @@ export default class GtfsController {
     if (!stopId) return response.badRequest({ error: 'stop_id query param required' })
 
     const now = new Date()
+    const nowUnix = Math.floor(now.getTime() / 1000)
     const y = now.getFullYear()
     const m = String(now.getMonth() + 1).padStart(2, '0')
     const d = String(now.getDate()).padStart(2, '0')
@@ -183,13 +184,41 @@ export default class GtfsController {
 
     const placeholders = serviceIds.map(() => '?').join(',')
     const sql = `SELECT st.trip_id, st.stop_id, st.stop_sequence, st.arrival_time, st.departure_time,
-        t.service_id, t.route_id, t.trip_headsign, r.route_short_name, r.route_long_name
+        t.service_id, t.route_id, t.trip_headsign, r.route_short_name, r.route_long_name,
+        rt.arrival_delay, rt.departure_delay, rt.created_timestamp AS realtime_updated_at
       FROM stop_times st
       JOIN trips t USING(trip_id)
       LEFT JOIN routes r USING(route_id)
+      LEFT JOIN (
+        SELECT u.* FROM stop_time_updates u
+        JOIN (
+          SELECT trip_id, stop_id, MAX(created_timestamp) AS max_ts
+          FROM stop_time_updates
+          WHERE stop_id = ? AND (expiration_timestamp IS NULL OR expiration_timestamp > ?)
+          GROUP BY trip_id, stop_id
+        ) latest
+        ON u.trip_id = latest.trip_id AND u.stop_id = latest.stop_id AND u.created_timestamp = latest.max_ts
+      ) rt ON rt.trip_id = st.trip_id AND rt.stop_id = st.stop_id
       WHERE st.stop_id = ? AND t.service_id IN (${placeholders})`
 
-    const rows = await GtfsDb.dbAll(sql, [stopId, ...serviceIds])
+    const rows = await GtfsDb.dbAll(sql, [stopId, nowUnix, stopId, ...serviceIds])
+
+    const toNumber = (value: unknown): number | null => {
+      if (value === null || value === undefined) return null
+      const num = Number(value)
+      return Number.isNaN(num) ? null : num
+    }
+
+    const formatSeconds = (totalSeconds: number | null): string | null => {
+      if (totalSeconds === null) return null
+      const sign = totalSeconds < 0 ? -1 : 1
+      const abs = Math.abs(totalSeconds)
+      const h = Math.floor(abs / 3600)
+      const m = Math.floor((abs % 3600) / 60)
+      const s = Math.floor(abs % 60)
+      const base = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+      return sign < 0 ? `-${base}` : base
+    }
 
     const upcoming = rows
       .map((r) => ({
@@ -197,9 +226,33 @@ export default class GtfsController {
         departure_seconds: timeToSeconds(r.departure_time),
         arrival_seconds: timeToSeconds(r.arrival_time),
       }))
-      .filter((r) => r.departure_seconds !== null)
-      .filter((r) => r.departure_seconds >= currentSeconds - 60)
-      .sort((a, b) => (a.departure_seconds as number) - (b.departure_seconds as number))
+      .map((r) => {
+        const delaySeconds = toNumber(r.departure_delay) ?? toNumber(r.arrival_delay)
+        const realtimeDepartureSeconds =
+          delaySeconds !== null && r.departure_seconds !== null
+            ? (r.departure_seconds as number) + delaySeconds
+            : r.departure_seconds
+        const realtimeArrivalSeconds =
+          delaySeconds !== null && r.arrival_seconds !== null
+            ? (r.arrival_seconds as number) + delaySeconds
+            : r.arrival_seconds
+
+        return {
+          ...r,
+          delay_seconds: delaySeconds,
+          realtime_departure_seconds: realtimeDepartureSeconds,
+          realtime_arrival_seconds: realtimeArrivalSeconds,
+          realtime_departure_time: formatSeconds(realtimeDepartureSeconds),
+          realtime_arrival_time: formatSeconds(realtimeArrivalSeconds),
+          realtime_updated: delaySeconds !== null && delaySeconds !== 0,
+        }
+      })
+      .filter((r) => r.realtime_departure_seconds !== null)
+      .filter((r) => (r.realtime_departure_seconds as number) >= currentSeconds - 60)
+      .sort(
+        (a, b) =>
+          (a.realtime_departure_seconds as number) - (b.realtime_departure_seconds as number)
+      )
       .slice(0, limit)
       .map((r) => ({
         trip_id: r.trip_id,
@@ -210,6 +263,12 @@ export default class GtfsController {
         trip_headsign: r.trip_headsign,
         departure_time: r.departure_time,
         arrival_time: r.arrival_time,
+        realtime_departure_time: r.realtime_departure_time,
+        realtime_arrival_time: r.realtime_arrival_time,
+        delay_seconds: r.delay_seconds,
+        delay_minutes: r.delay_seconds === null ? null : Number((r.delay_seconds / 60).toFixed(1)),
+        realtime_updated: r.realtime_updated,
+        realtime_updated_at: r.realtime_updated_at ?? null,
       }))
 
     return response.ok({ departures: upcoming })

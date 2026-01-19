@@ -83,6 +83,14 @@ On boot, the backend runs `importGtfs` once, then schedules:
 These schedules are implemented in `app/services/gtfs_importer.ts`, registered in
 `start/scheduler.ts`, and run by the scheduler worker started from `providers/gtfs_provider.ts`.
 
+`GET /api/next-departures` now merges GTFS-RT stop time updates when available. Each departure
+includes:
+
+- `realtime_departure_time` / `realtime_arrival_time` (adjusted by delay)
+- `delay_seconds` and `delay_minutes` (positive = late, negative = early)
+- `realtime_updated` (true when delay is non-zero)
+- `realtime_updated_at` (timestamp from GTFS-RT update, if present)
+
 ## Shapes generation
 
 On server boot, the backend generates synthetic shapes from representative trips (stored in `generated_shapes`).
