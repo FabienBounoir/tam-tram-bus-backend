@@ -214,7 +214,7 @@
 
       el('btn-find-stops').addEventListener('click', async () => {
         const name = encodeURIComponent(el('q-stop-name').value)
-        const data = await fetchJson('/api/stops-by-name?name=' + name)
+        const data = await fetchJson('/api/stops-by-name?name=' + name + '&include_routes=1')
         if (data.error) el('stops-result').innerText = JSON.stringify(data, null, 2)
         else
           renderTable(
@@ -224,7 +224,7 @@
               stop_name: s.stop_name,
               lat: s.stop_lat,
               lon: s.stop_lon,
-              routes: s.routes.map((r) => r.route_short_name).join(','),
+              routes: (s.routes ?? []).map((r) => r.route_short_name).join(','),
             }))
           )
       })
