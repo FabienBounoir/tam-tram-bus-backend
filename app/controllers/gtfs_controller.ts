@@ -170,19 +170,27 @@ export default class GtfsController {
 
     const now = new Date()
     const nowUnix = Math.floor(now.getTime() / 1000)
-    const y = now.getFullYear()
-    const m = String(now.getMonth() + 1).padStart(2, '0')
-    const d = String(now.getDate()).padStart(2, '0')
-    const ymd = `${y}${m}${d}`
+    const formatYmd = (date: Date) => {
+      const y = date.getFullYear()
+      const m = String(date.getMonth() + 1).padStart(2, '0')
+      const d = String(date.getDate()).padStart(2, '0')
+      return `${y}${m}${d}`
+    }
+    const ymdToday = formatYmd(now)
+    const tomorrow = new Date(now)
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    const ymdTomorrow = formatYmd(tomorrow)
 
     const currentSeconds = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds()
-    const serviceIds = await getActiveServiceIds(ymd)
+    const todayServiceIds = await getActiveServiceIds(ymdToday)
+    const tomorrowServiceIds = await getActiveServiceIds(ymdTomorrow)
+    const allServiceIds = Array.from(new Set([...todayServiceIds, ...tomorrowServiceIds]))
 
-    if (!serviceIds.length) {
+    if (!allServiceIds.length) {
       return response.ok({ departures: [] })
     }
 
-    const placeholders = serviceIds.map(() => '?').join(',')
+    const placeholders = allServiceIds.map(() => '?').join(',')
     const sql = `SELECT st.trip_id, st.stop_id, st.stop_sequence, st.arrival_time, st.departure_time,
         t.service_id, t.route_id, t.trip_headsign, r.route_short_name, r.route_long_name,
         rt.arrival_delay, rt.departure_delay, rt.created_timestamp AS realtime_updated_at
@@ -201,7 +209,7 @@ export default class GtfsController {
       ) rt ON rt.trip_id = st.trip_id AND rt.stop_id = st.stop_id
       WHERE st.stop_id = ? AND t.service_id IN (${placeholders})`
 
-    const rows = await GtfsDb.dbAll(sql, [stopId, nowUnix, stopId, ...serviceIds])
+    const rows = await GtfsDb.dbAll(sql, [stopId, nowUnix, stopId, ...allServiceIds])
 
     const toNumber = (value: unknown): number | null => {
       if (value === null || value === undefined) return null
@@ -220,32 +228,57 @@ export default class GtfsController {
       return sign < 0 ? `-${base}` : base
     }
 
+    const todayServiceSet = new Set(todayServiceIds)
+    const tomorrowServiceSet = new Set(tomorrowServiceIds)
+
     const upcoming = rows
       .map((r) => ({
         ...r,
         departure_seconds: timeToSeconds(r.departure_time),
         arrival_seconds: timeToSeconds(r.arrival_time),
       }))
-      .map((r) => {
+      .flatMap((r) => {
         const delaySeconds = toNumber(r.departure_delay) ?? toNumber(r.arrival_delay)
-        const realtimeDepartureSeconds =
+        const baseRealtimeDepartureSeconds =
           delaySeconds !== null && r.departure_seconds !== null
             ? (r.departure_seconds as number) + delaySeconds
             : r.departure_seconds
-        const realtimeArrivalSeconds =
+        const baseRealtimeArrivalSeconds =
           delaySeconds !== null && r.arrival_seconds !== null
             ? (r.arrival_seconds as number) + delaySeconds
             : r.arrival_seconds
 
-        return {
-          ...r,
-          delay_seconds: delaySeconds,
-          realtime_departure_seconds: realtimeDepartureSeconds,
-          realtime_arrival_seconds: realtimeArrivalSeconds,
-          realtime_departure_time: formatSeconds(realtimeDepartureSeconds),
-          realtime_arrival_time: formatSeconds(realtimeArrivalSeconds),
-          realtime_updated: delaySeconds !== null && delaySeconds !== 0,
+        const candidates: any[] = []
+        if (todayServiceSet.has(r.service_id)) {
+          candidates.push({ day_offset: 0 })
         }
+
+        if (
+          tomorrowServiceSet.has(r.service_id) &&
+          r.departure_seconds !== null &&
+          (r.departure_seconds as number) < 24 * 3600
+        ) {
+          candidates.push({ day_offset: 24 * 3600 })
+        }
+
+        return candidates.map((candidate) => {
+          const realtimeDepartureSeconds =
+            baseRealtimeDepartureSeconds === null
+              ? null
+              : baseRealtimeDepartureSeconds + candidate.day_offset
+          const realtimeArrivalSeconds =
+            baseRealtimeArrivalSeconds === null ? null : baseRealtimeArrivalSeconds + candidate.day_offset
+
+          return {
+            ...r,
+            delay_seconds: delaySeconds,
+            realtime_departure_seconds: realtimeDepartureSeconds,
+            realtime_arrival_seconds: realtimeArrivalSeconds,
+            realtime_departure_time: formatSeconds(realtimeDepartureSeconds),
+            realtime_arrival_time: formatSeconds(realtimeArrivalSeconds),
+            realtime_updated: delaySeconds !== null && delaySeconds !== 0,
+          }
+        })
       })
       .filter((r) => r.realtime_departure_seconds !== null)
       .filter((r) => (r.realtime_departure_seconds as number) >= currentSeconds - 60)
