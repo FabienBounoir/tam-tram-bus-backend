@@ -148,6 +148,32 @@
       <div id="map"></div>
     </div>
 
+    <div class="section">
+      <h2>8) Timeline d'un trip (ETA montée → descente)</h2>
+      <div class="row">
+        <input id="q-trip-id" type="text" placeholder="trip_id" />
+        <input id="q-trip-from-stop" type="text" placeholder="from_stop_id (optionnel)" />
+        <input id="q-trip-to-stop" type="text" placeholder="to_stop_id (optionnel)" />
+        <button id="btn-trip-stop-times">Get trip stop times</button>
+      </div>
+      <div class="row">
+        <input
+          id="q-trip-from-seq"
+          type="text"
+          placeholder="from_stop_sequence (optionnel)"
+          style="width: 220px"
+        />
+        <input
+          id="q-trip-to-seq"
+          type="text"
+          placeholder="to_stop_sequence (optionnel)"
+          style="width: 220px"
+        />
+      </div>
+      <div id="trip-meta-result"></div>
+      <div id="trip-result"></div>
+    </div>
+
     <script>
       // Leaflet (loaded dynamically)
       const leafletCss = document.createElement('link')
@@ -414,6 +440,74 @@
             mapLayerGroup
           )
         })
+      })
+
+      el('btn-trip-stop-times').addEventListener('click', async () => {
+        const tripId = (el('q-trip-id').value || '').trim()
+        const fromStopId = (el('q-trip-from-stop').value || '').trim()
+        const toStopId = (el('q-trip-to-stop').value || '').trim()
+        const fromSeq = (el('q-trip-from-seq').value || '').trim()
+        const toSeq = (el('q-trip-to-seq').value || '').trim()
+
+        if (!tripId) {
+          el('trip-meta-result').innerText = 'trip_id requis'
+          el('trip-result').innerHTML = ''
+          return
+        }
+
+        const params = new URLSearchParams({ trip_id: tripId })
+        if (fromStopId) params.set('from_stop_id', fromStopId)
+        if (toStopId) params.set('to_stop_id', toStopId)
+        if (fromSeq) params.set('from_stop_sequence', fromSeq)
+        if (toSeq) params.set('to_stop_sequence', toSeq)
+
+        const data = await fetchJson('/api/trip-stop-times?' + params.toString())
+        if (data.error) {
+          el('trip-meta-result').innerText = JSON.stringify(data, null, 2)
+          el('trip-result').innerHTML = ''
+          return
+        }
+
+        const trip = data.trip || {}
+        const journey = data.journey || null
+
+        el('trip-meta-result').innerHTML =
+          '<div class="small">' +
+          'Trip: <b>' +
+          (trip.trip_id ?? '') +
+          '</b> — Route: <b>' +
+          (trip.route_short_name ?? trip.route_id ?? '') +
+          '</b>' +
+          (trip.trip_headsign ? ' — Destination: <b>' + trip.trip_headsign + '</b>' : '') +
+          '</div>' +
+          (journey
+            ? '<div class="small" style="margin-top:6px">' +
+              'Trajet sélectionné: <b>' +
+              (journey.from_stop_name ?? journey.from_stop_id ?? '') +
+              '</b> → <b>' +
+              (journey.to_stop_name ?? journey.to_stop_id ?? '') +
+              '</b> | Théorique: <b>' +
+              (journey.scheduled_travel_minutes ?? 'n/a') +
+              ' min</b> | Realtime: <b>' +
+              (journey.realtime_travel_minutes ?? 'n/a') +
+              ' min</b></div>'
+            : '')
+
+        renderTable(
+          el('trip-result'),
+          (data.stops || []).map((s) => ({
+            seq: s.stop_sequence,
+            stop_id: s.stop_id,
+            stop_name: s.stop_name,
+            arr_theorique: s.arrival_time,
+            dep_theorique: s.departure_time,
+            arr_realtime: s.realtime_arrival_time,
+            dep_realtime: s.realtime_departure_time,
+            delay_sec: s.delay_seconds,
+            delay_min: s.delay_minutes,
+            realtime_updated: s.realtime_updated,
+          }))
+        )
       })
 
       // Auto-run initial search

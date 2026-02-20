@@ -307,6 +307,202 @@ export default class GtfsController {
     return response.ok({ departures: upcoming })
   }
 
+  async tripStopTimes({ request, response }: HttpContext) {
+    const tripId = request.input('trip_id') || request.input('tripId')
+    if (!tripId) return response.badRequest({ error: 'trip_id query param required' })
+
+    const fromStopId = request.input('from_stop_id') || request.input('fromStopId')
+    const toStopId = request.input('to_stop_id') || request.input('toStopId')
+    const fromSequenceRaw = request.input('from_stop_sequence') || request.input('fromStopSequence')
+    const toSequenceRaw = request.input('to_stop_sequence') || request.input('toStopSequence')
+
+    const fromSequence =
+      fromSequenceRaw === undefined || fromSequenceRaw === null
+        ? null
+        : Number.parseInt(String(fromSequenceRaw), 10)
+    const toSequence =
+      toSequenceRaw === undefined || toSequenceRaw === null
+        ? null
+        : Number.parseInt(String(toSequenceRaw), 10)
+
+    if (fromSequenceRaw !== undefined && Number.isNaN(fromSequence as number)) {
+      return response.badRequest({ error: 'from_stop_sequence must be a valid number' })
+    }
+
+    if (toSequenceRaw !== undefined && Number.isNaN(toSequence as number)) {
+      return response.badRequest({ error: 'to_stop_sequence must be a valid number' })
+    }
+
+    const nowUnix = Math.floor(Date.now() / 1000)
+
+    const sql = `SELECT st.trip_id, st.stop_id, st.stop_sequence, st.arrival_time, st.departure_time,
+        s.stop_name,
+        t.route_id, t.service_id, t.direction_id, t.trip_headsign,
+        r.route_short_name, r.route_long_name,
+        rt.arrival_delay, rt.departure_delay, rt.created_timestamp AS realtime_updated_at
+      FROM stop_times st
+      JOIN stops s USING(stop_id)
+      JOIN trips t USING(trip_id)
+      LEFT JOIN routes r USING(route_id)
+      LEFT JOIN (
+        SELECT u.* FROM stop_time_updates u
+        JOIN (
+          SELECT trip_id, stop_id, MAX(created_timestamp) AS max_ts
+          FROM stop_time_updates
+          WHERE trip_id = ? AND (expiration_timestamp IS NULL OR expiration_timestamp > ?)
+          GROUP BY trip_id, stop_id
+        ) latest
+        ON u.trip_id = latest.trip_id AND u.stop_id = latest.stop_id AND u.created_timestamp = latest.max_ts
+      ) rt ON rt.trip_id = st.trip_id AND rt.stop_id = st.stop_id
+      WHERE st.trip_id = ?
+      ORDER BY st.stop_sequence`
+
+    const rows = await GtfsDb.dbAll(sql, [tripId, nowUnix, tripId])
+
+    if (!rows.length) {
+      return response.notFound({ error: 'trip_id not found' })
+    }
+
+    const toNumber = (value: unknown): number | null => {
+      if (value === null || value === undefined) return null
+      const num = Number(value)
+      return Number.isNaN(num) ? null : num
+    }
+
+    const formatSeconds = (totalSeconds: number | null): string | null => {
+      if (totalSeconds === null) return null
+      const sign = totalSeconds < 0 ? -1 : 1
+      const abs = Math.abs(totalSeconds)
+      const h = Math.floor(abs / 3600)
+      const m = Math.floor((abs % 3600) / 60)
+      const s = Math.floor(abs % 60)
+      const base = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+      return sign < 0 ? `-${base}` : base
+    }
+
+    const stops = rows.map((row) => {
+      const arrivalSeconds = timeToSeconds(row.arrival_time)
+      const departureSeconds = timeToSeconds(row.departure_time)
+      const arrivalDelay = toNumber(row.arrival_delay)
+      const departureDelay = toNumber(row.departure_delay)
+      const fallbackDelay = arrivalDelay ?? departureDelay
+      const effectiveArrivalDelay = arrivalDelay ?? departureDelay ?? 0
+      const effectiveDepartureDelay = departureDelay ?? arrivalDelay ?? 0
+
+      const realtimeArrivalSeconds =
+        arrivalSeconds === null ? null : (arrivalSeconds as number) + effectiveArrivalDelay
+      const realtimeDepartureSeconds =
+        departureSeconds === null ? null : (departureSeconds as number) + effectiveDepartureDelay
+
+      return {
+        stop_id: row.stop_id,
+        stop_name: row.stop_name,
+        stop_sequence: Number(row.stop_sequence),
+        arrival_time: row.arrival_time,
+        departure_time: row.departure_time,
+        arrival_seconds: arrivalSeconds,
+        departure_seconds: departureSeconds,
+        realtime_arrival_time: formatSeconds(realtimeArrivalSeconds),
+        realtime_departure_time: formatSeconds(realtimeDepartureSeconds),
+        realtime_arrival_seconds: realtimeArrivalSeconds,
+        realtime_departure_seconds: realtimeDepartureSeconds,
+        arrival_delay_seconds: arrivalDelay,
+        departure_delay_seconds: departureDelay,
+        delay_seconds: fallbackDelay,
+        delay_minutes: fallbackDelay === null ? null : Number((fallbackDelay / 60).toFixed(1)),
+        realtime_available: arrivalDelay !== null || departureDelay !== null,
+        realtime_updated: (arrivalDelay ?? 0) !== 0 || (departureDelay ?? 0) !== 0,
+        realtime_updated_at: row.realtime_updated_at ?? null,
+      }
+    })
+
+    const findIndex = (stopId: string | null, sequence: number | null, minIndex = 0): number => {
+      if (sequence !== null) {
+        return stops.findIndex((s, index) => index >= minIndex && s.stop_sequence === sequence)
+      }
+
+      if (stopId) {
+        return stops.findIndex((s, index) => index >= minIndex && s.stop_id === stopId)
+      }
+
+      return -1
+    }
+
+    const fromIndex = findIndex(fromStopId ?? null, fromSequence)
+    const toIndex = findIndex(toStopId ?? null, toSequence, fromIndex === -1 ? 0 : fromIndex + 1)
+
+    if ((fromStopId || fromSequence !== null) && fromIndex === -1) {
+      return response.notFound({
+        error: 'from stop not found in this trip',
+        from_stop_id: fromStopId ?? null,
+        from_stop_sequence: fromSequence,
+      })
+    }
+
+    if ((toStopId || toSequence !== null) && toIndex === -1) {
+      return response.notFound({
+        error: 'to stop not found after from stop in this trip',
+        to_stop_id: toStopId ?? null,
+        to_stop_sequence: toSequence,
+      })
+    }
+
+    const fromStop = fromIndex === -1 ? null : stops[fromIndex]
+    const toStop = toIndex === -1 ? null : stops[toIndex]
+
+    const scheduledTravelSeconds =
+      fromStop && toStop && fromStop.departure_seconds !== null && toStop.arrival_seconds !== null
+        ? (toStop.arrival_seconds as number) - (fromStop.departure_seconds as number)
+        : null
+
+    const realtimeTravelSeconds =
+      fromStop &&
+      toStop &&
+      fromStop.realtime_departure_seconds !== null &&
+      toStop.realtime_arrival_seconds !== null
+        ? (toStop.realtime_arrival_seconds as number) -
+          (fromStop.realtime_departure_seconds as number)
+        : null
+
+    const first = rows[0]
+
+    return response.ok({
+      trip: {
+        trip_id: first.trip_id,
+        route_id: first.route_id,
+        route_short_name: first.route_short_name,
+        route_long_name: first.route_long_name,
+        service_id: first.service_id,
+        direction_id: first.direction_id === null ? null : Number(first.direction_id),
+        trip_headsign: first.trip_headsign,
+      },
+      journey:
+        fromStop && toStop
+          ? {
+              from_stop_id: fromStop.stop_id,
+              from_stop_name: fromStop.stop_name,
+              from_stop_sequence: fromStop.stop_sequence,
+              to_stop_id: toStop.stop_id,
+              to_stop_name: toStop.stop_name,
+              to_stop_sequence: toStop.stop_sequence,
+              scheduled_travel_seconds: scheduledTravelSeconds,
+              scheduled_travel_minutes:
+                scheduledTravelSeconds === null
+                  ? null
+                  : Number((scheduledTravelSeconds / 60).toFixed(1)),
+              realtime_travel_seconds: realtimeTravelSeconds,
+              realtime_travel_minutes:
+                realtimeTravelSeconds === null ? null : Number((realtimeTravelSeconds / 60).toFixed(1)),
+              delta_seconds:
+                scheduledTravelSeconds === null || realtimeTravelSeconds === null
+                  ? null
+                  : realtimeTravelSeconds - scheduledTravelSeconds,
+            }
+          : null,
+      stops,
+    })
+  }
+
   async stopsNear({ request, response }: HttpContext) {
     const lat = Number.parseFloat(request.input('lat'))
     const lon = Number.parseFloat(request.input('lon'))

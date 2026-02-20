@@ -33,6 +33,7 @@ router
     )
     router.get('/routes-by-stop', '#controllers/gtfs_controller.routesByStop')
     router.get('/next-departures', '#controllers/gtfs_controller.nextDepartures')
+    router.get('/trip-stop-times', '#controllers/gtfs_controller.tripStopTimes')
     router.get('/stops-near', '#controllers/gtfs_controller.stopsNear')
     router.get('/shapes', '#controllers/gtfs_controller.shapes')
     router.get('/shape', '#controllers/gtfs_controller.shape')
