@@ -32,7 +32,6 @@
         "pathways",
         "rider_categories",
         "route_networks",
-        "shapes",
         "stop_areas",
         "timeframes",
         "translations",
@@ -47,7 +46,7 @@
   "downloadTimeout": 10000,
   "ignoreDuplicates": false,
   "ignoreErrors": false,
-  "gtfsRealtimeExpirationSeconds": false,
+  "gtfsRealtimeExpirationSeconds": 120,
   "sqlitePath": "./gtfs.sqlite",
   "exportPath": "/tmp"
 }

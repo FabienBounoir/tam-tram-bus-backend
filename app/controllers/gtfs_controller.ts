@@ -313,12 +313,38 @@ export default class GtfsController {
     const shapeId = request.input('shape_id') || request.input('shapeId')
     if (!shapeId) return response.badRequest({ error: 'shape_id required' })
 
-    const rows = await GtfsDb.dbAll(
-      'SELECT shape_pt_lat AS lat, shape_pt_lon AS lon, shape_pt_sequence AS seq FROM shapes WHERE shape_id = ? ORDER BY shape_pt_sequence',
-      [shapeId]
+    const hasShapes = await GtfsDb.dbGet(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='shapes'"
     )
 
-    return response.ok({ shape_id: shapeId, points: rows })
+    if (hasShapes) {
+      const rows = await GtfsDb.dbAll(
+        'SELECT shape_pt_lat AS lat, shape_pt_lon AS lon, shape_pt_sequence AS seq FROM shapes WHERE shape_id = ? ORDER BY shape_pt_sequence',
+        [shapeId]
+      )
+
+      if (rows.length) {
+        return response.ok({ shape_id: shapeId, points: rows, source: 'shapes_table' })
+      }
+    }
+
+    const hasGeneratedShapes = await GtfsDb.dbGet(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='generated_shapes'"
+    )
+
+    if (hasGeneratedShapes) {
+      const generated = await GtfsDb.dbGet(
+        'SELECT points_json FROM generated_shapes WHERE shape_id = ?',
+        [shapeId]
+      )
+
+      if (generated?.points_json) {
+        const points = JSON.parse(generated.points_json)
+        return response.ok({ shape_id: shapeId, points, source: 'generated_shapes' })
+      }
+    }
+
+    return response.notFound({ error: 'shape not found' })
   }
 
   async shapeByRoute({ request, response }: HttpContext) {
