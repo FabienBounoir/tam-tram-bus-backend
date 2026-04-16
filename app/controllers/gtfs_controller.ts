@@ -5,6 +5,28 @@ import {
   getActiveServiceIds,
   timeToSeconds,
 } from '#services/gtfs_service'
+import {
+  getVehicleLines,
+  getVehiclePositions,
+  isVehicleFeedSourceSelection,
+} from '#services/vehicle_positions_service'
+import {
+  getAlertLines,
+  getAlerts,
+  getAlertStops,
+  isAlertFeedSourceSelection,
+} from '#services/alerts_service'
+import {
+  getNetworkLineGroups,
+  getNetworkLines,
+  getNetworkLinesGeoJson,
+  isNetworkLineSourceSelection,
+} from '#services/network_lines_service'
+
+function parseBoolean(value: unknown, defaultValue = false): boolean {
+  if (value === undefined || value === null) return defaultValue
+  return value === true || value === 'true' || value === '1' || value === 1
+}
 
 export default class GtfsController {
   async stationNames({ response }: HttpContext) {
@@ -267,7 +289,9 @@ export default class GtfsController {
               ? null
               : baseRealtimeDepartureSeconds + candidate.day_offset
           const realtimeArrivalSeconds =
-            baseRealtimeArrivalSeconds === null ? null : baseRealtimeArrivalSeconds + candidate.day_offset
+            baseRealtimeArrivalSeconds === null
+              ? null
+              : baseRealtimeArrivalSeconds + candidate.day_offset
 
           return {
             ...r,
@@ -492,7 +516,9 @@ export default class GtfsController {
                   : Number((scheduledTravelSeconds / 60).toFixed(1)),
               realtime_travel_seconds: realtimeTravelSeconds,
               realtime_travel_minutes:
-                realtimeTravelSeconds === null ? null : Number((realtimeTravelSeconds / 60).toFixed(1)),
+                realtimeTravelSeconds === null
+                  ? null
+                  : Number((realtimeTravelSeconds / 60).toFixed(1)),
               delta_seconds:
                 scheduledTravelSeconds === null || realtimeTravelSeconds === null
                   ? null
@@ -501,6 +527,243 @@ export default class GtfsController {
           : null,
       stops,
     })
+  }
+
+  async vehiclePositions({ request, response }: HttpContext) {
+    const sourceParam = String(request.input('source') || 'all').toLowerCase()
+    if (!isVehicleFeedSourceSelection(sourceParam)) {
+      return response.badRequest({ error: 'source must be one of: all, urbain, suburbain' })
+    }
+
+    const routeId = request.input('route_id') || request.input('routeId') || null
+    const routeShortName =
+      request.input('route_short_name') || request.input('routeShortName') || null
+    const line = request.input('line') || null
+    const refreshRaw = request.input('refresh') ?? request.input('force_refresh')
+    const forceRefresh =
+      refreshRaw === true || refreshRaw === 'true' || refreshRaw === '1' || refreshRaw === 1
+
+    const data = await getVehiclePositions({
+      source: sourceParam,
+      line,
+      routeId,
+      routeShortName,
+      forceRefresh,
+    })
+
+    return response.ok(data)
+  }
+
+  async vehicleLines({ request, response }: HttpContext) {
+    const sourceParam = String(request.input('source') || 'all').toLowerCase()
+    if (!isVehicleFeedSourceSelection(sourceParam)) {
+      return response.badRequest({ error: 'source must be one of: all, urbain, suburbain' })
+    }
+
+    const search = request.input('search') || request.input('line') || null
+    const refreshRaw = request.input('refresh') ?? request.input('force_refresh')
+    const forceRefresh =
+      refreshRaw === true || refreshRaw === 'true' || refreshRaw === '1' || refreshRaw === 1
+
+    const data = await getVehicleLines(sourceParam, search, forceRefresh)
+    return response.ok(data)
+  }
+
+  async alerts({ request, response }: HttpContext) {
+    const sourceParam = String(request.input('source') || 'all').toLowerCase()
+    if (!isAlertFeedSourceSelection(sourceParam)) {
+      return response.badRequest({ error: 'source must be one of: all, urbain, suburbain' })
+    }
+
+    const line = request.input('line') || null
+    const routeId = request.input('route_id') || request.input('routeId') || null
+    const routeShortName =
+      request.input('route_short_name') || request.input('routeShortName') || null
+    const stopId = request.input('stop_id') || request.input('stopId') || null
+    const search = request.input('search') || null
+    const effect = request.input('effect') || null
+    const severity = request.input('severity') || null
+
+    const activeRaw = request.input('active_only') ?? request.input('active')
+    const activeOnly = parseBoolean(activeRaw, true)
+
+    const refreshRaw = request.input('refresh') ?? request.input('force_refresh')
+    const forceRefresh = parseBoolean(refreshRaw)
+
+    const data = await getAlerts({
+      source: sourceParam,
+      line,
+      routeId,
+      routeShortName,
+      stopId,
+      search,
+      effect,
+      severity,
+      activeOnly,
+      forceRefresh,
+    })
+
+    return response.ok(data)
+  }
+
+  async alertLines({ request, response }: HttpContext) {
+    const sourceParam = String(request.input('source') || 'all').toLowerCase()
+    if (!isAlertFeedSourceSelection(sourceParam)) {
+      return response.badRequest({ error: 'source must be one of: all, urbain, suburbain' })
+    }
+
+    const search = request.input('search') || request.input('line') || null
+    const activeRaw = request.input('active_only') ?? request.input('active')
+    const activeOnly = parseBoolean(activeRaw, true)
+    const refreshRaw = request.input('refresh') ?? request.input('force_refresh')
+    const forceRefresh = parseBoolean(refreshRaw)
+
+    const data = await getAlertLines(sourceParam, search, activeOnly, forceRefresh)
+    return response.ok(data)
+  }
+
+  async alertsForLine({ params, request, response }: HttpContext) {
+    const sourceParam = String(request.input('source') || 'all').toLowerCase()
+    if (!isAlertFeedSourceSelection(sourceParam)) {
+      return response.badRequest({ error: 'source must be one of: all, urbain, suburbain' })
+    }
+
+    const line = String(params.line || '').trim()
+    if (!line.length) {
+      return response.badRequest({ error: 'line route parameter required' })
+    }
+
+    const activeRaw = request.input('active_only') ?? request.input('active')
+    const activeOnly = parseBoolean(activeRaw, true)
+    const refreshRaw = request.input('refresh') ?? request.input('force_refresh')
+    const forceRefresh = parseBoolean(refreshRaw)
+
+    const data = await getAlerts({
+      source: sourceParam,
+      line,
+      activeOnly,
+      forceRefresh,
+    })
+
+    return response.ok(data)
+  }
+
+  async alertStops({ request, response }: HttpContext) {
+    const sourceParam = String(request.input('source') || 'all').toLowerCase()
+    if (!isAlertFeedSourceSelection(sourceParam)) {
+      return response.badRequest({ error: 'source must be one of: all, urbain, suburbain' })
+    }
+
+    const search = request.input('search') || request.input('stop') || null
+    const activeRaw = request.input('active_only') ?? request.input('active')
+    const activeOnly = parseBoolean(activeRaw, true)
+    const refreshRaw = request.input('refresh') ?? request.input('force_refresh')
+    const forceRefresh = parseBoolean(refreshRaw)
+
+    const data = await getAlertStops(sourceParam, search, activeOnly, forceRefresh)
+    return response.ok(data)
+  }
+
+  async displayLines({ request, response }: HttpContext) {
+    const sourceParam = String(request.input('source') || 'all').toLowerCase()
+    if (!isNetworkLineSourceSelection(sourceParam)) {
+      return response.badRequest({ error: 'source must be one of: all, tram, bus, bustram' })
+    }
+
+    const line = request.input('line') || null
+    const search = request.input('search') || null
+    const mode = request.input('mode') || null
+    const network = request.input('network') || null
+
+    const includeGeometryRaw = request.input('include_geometry') ?? request.input('includeGeometry')
+    const includeGeometry = parseBoolean(includeGeometryRaw)
+    const refreshRaw = request.input('refresh') ?? request.input('force_refresh')
+    const forceRefresh = parseBoolean(refreshRaw)
+
+    const data = await getNetworkLines({
+      source: sourceParam,
+      line,
+      search,
+      mode,
+      network,
+      includeGeometry,
+      forceRefresh,
+    })
+
+    return response.ok(data)
+  }
+
+  async displayLineGroups({ request, response }: HttpContext) {
+    const sourceParam = String(request.input('source') || 'all').toLowerCase()
+    if (!isNetworkLineSourceSelection(sourceParam)) {
+      return response.badRequest({ error: 'source must be one of: all, tram, bus, bustram' })
+    }
+
+    const line = request.input('line') || null
+    const search = request.input('search') || null
+    const mode = request.input('mode') || null
+    const network = request.input('network') || null
+    const refreshRaw = request.input('refresh') ?? request.input('force_refresh')
+    const forceRefresh = parseBoolean(refreshRaw)
+
+    const data = await getNetworkLineGroups(sourceParam, line, search, mode, network, forceRefresh)
+
+    return response.ok(data)
+  }
+
+  async displayLinesGeoJson({ request, response }: HttpContext) {
+    const sourceParam = String(request.input('source') || 'all').toLowerCase()
+    if (!isNetworkLineSourceSelection(sourceParam)) {
+      return response.badRequest({ error: 'source must be one of: all, tram, bus, bustram' })
+    }
+
+    const line = request.input('line') || null
+    const search = request.input('search') || null
+    const mode = request.input('mode') || null
+    const network = request.input('network') || null
+    const refreshRaw = request.input('refresh') ?? request.input('force_refresh')
+    const forceRefresh = parseBoolean(refreshRaw)
+
+    const data = await getNetworkLinesGeoJson({
+      source: sourceParam,
+      line,
+      search,
+      mode,
+      network,
+      forceRefresh,
+    })
+
+    return response.ok(data)
+  }
+
+  async displayLinesForLine({ params, request, response }: HttpContext) {
+    const sourceParam = String(request.input('source') || 'all').toLowerCase()
+    if (!isNetworkLineSourceSelection(sourceParam)) {
+      return response.badRequest({ error: 'source must be one of: all, tram, bus, bustram' })
+    }
+
+    const line = String(params.line || '').trim()
+    if (!line.length) {
+      return response.badRequest({ error: 'line route parameter required' })
+    }
+
+    const mode = request.input('mode') || null
+    const network = request.input('network') || null
+    const includeGeometryRaw = request.input('include_geometry') ?? request.input('includeGeometry')
+    const includeGeometry = parseBoolean(includeGeometryRaw, true)
+    const refreshRaw = request.input('refresh') ?? request.input('force_refresh')
+    const forceRefresh = parseBoolean(refreshRaw)
+
+    const data = await getNetworkLines({
+      source: sourceParam,
+      line,
+      mode,
+      network,
+      includeGeometry,
+      forceRefresh,
+    })
+
+    return response.ok(data)
   }
 
   async stopsNear({ request, response }: HttpContext) {

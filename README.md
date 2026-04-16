@@ -68,6 +68,14 @@ All endpoints are prefixed with `/api` unless noted.
 - `GET /api/next-departures?stop_id=...&limit=10`
 - `GET /api/trip-stop-times?trip_id=...&from_stop_id=...&to_stop_id=...`
 - `GET /api/stops-near?lat=...&lon=...&radius=0.5`
+- `GET /api/alerts?source=all&active_only=true`
+- `GET /api/alerts/lines?source=all`
+- `GET /api/alerts/line/:line?source=all`
+- `GET /api/alerts/stops?source=all`
+- `GET /api/display-lines?source=all&include_geometry=false`
+- `GET /api/display-lines/lines?source=all`
+- `GET /api/display-lines/line/:line?source=all&include_geometry=true`
+- `GET /api/display-lines/geojson?source=all`
 - `GET /api/shapes`
 - `GET /api/shape?shape_id=...`
 - `GET /api/shape-by-route?route_id=...&direction_id=...`
@@ -96,6 +104,41 @@ includes:
 times for each stop. When `from_stop_id` and `to_stop_id` (or `from_stop_sequence` and
 `to_stop_sequence`) are provided, the response also includes `journey` with scheduled vs realtime
 travel duration between the two stops.
+
+`GET /api/alerts` returns GTFS-RT service alerts from Urbain and Suburbain feeds with GTFS
+enrichment (line names, stop names). Useful query params:
+
+- `source=all|urbain|suburbain`
+- `line=...` or `route_id=...` or `route_short_name=...`
+- `stop_id=...`
+- `search=...` (text search in title/description/line/stop)
+- `active_only=true|false` (defaults to `true`)
+- `effect=...` and `severity=...`
+- `refresh=true` to bypass short cache
+
+`GET /api/alerts/lines` groups alerts by line with `alert_count` and `active_alert_count`.
+
+`GET /api/alerts/line/:line` is a convenience endpoint for one line (same payload shape as
+`/api/alerts`).
+
+`GET /api/alerts/stops` groups alerts by stop with impacted stop counts.
+
+`GET /api/display-lines` returns tram/bus/bustram line segments from Montpellier open-data
+GeoJSON feeds. It is normalized for mobile usage and supports:
+
+- `source=all|tram|bus|bustram`
+- `line=...` (line code/name, ex: `L2`, `2`, `24`, `A`)
+- `search=...`
+- `mode=...` and `network=...`
+- `include_geometry=true|false` (default: `false`)
+- `refresh=true` to bypass cache
+
+`GET /api/display-lines/lines` returns grouped lines (one item per line, with color,
+directions, and segment count).
+
+`GET /api/display-lines/line/:line` is a convenience endpoint for one line.
+
+`GET /api/display-lines/geojson` returns a FeatureCollection ready to render on map clients.
 
 ## Shapes generation
 

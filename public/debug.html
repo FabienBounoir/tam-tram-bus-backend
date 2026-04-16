@@ -31,6 +31,11 @@
         border-radius: 4px;
         width: 320px;
       }
+      select {
+        padding: 6px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+      }
       button {
         padding: 6px 10px;
         border-radius: 4px;
@@ -69,6 +74,18 @@
       }
       #map {
         height: 420px;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        margin-top: 8px;
+      }
+      #vehicles-map {
+        height: 480px;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        margin-top: 8px;
+      }
+      #display-lines-map {
+        height: 480px;
         border: 1px solid #ddd;
         border-radius: 8px;
         margin-top: 8px;
@@ -174,6 +191,128 @@
       <div id="trip-result"></div>
     </div>
 
+    <div class="section">
+      <h2>9) Véhicules temps réel par ligne (carte)</h2>
+      <div class="row">
+        <select id="q-vp-source" style="width: 150px">
+          <option value="all" selected>all</option>
+          <option value="urbain">urbain</option>
+          <option value="suburbain">suburbain</option>
+        </select>
+        <input
+          id="q-vp-line"
+          type="text"
+          placeholder="line (ex: T1, 14, route_id)"
+          style="width: 260px"
+        />
+        <button id="btn-vp-load">Load vehicles</button>
+        <button id="btn-vp-refresh-start">Start auto refresh</button>
+        <button id="btn-vp-refresh-stop">Stop refresh</button>
+      </div>
+      <div class="row">
+        <input
+          id="q-vp-refresh-seconds"
+          type="text"
+          value="20"
+          placeholder="refresh s"
+          style="width: 90px"
+        />
+        <label class="small">
+          <input id="q-vp-show-shape" type="checkbox" checked />
+          Afficher la shape de la ligne sélectionnée
+        </label>
+      </div>
+      <div id="vp-meta-result" class="small"></div>
+      <div id="vp-result"></div>
+      <div id="vehicles-map"></div>
+    </div>
+
+    <div class="section">
+      <h2>10) Alertes temps réel (tests API)</h2>
+      <div class="row">
+        <select id="q-alert-source" style="width: 150px">
+          <option value="all" selected>all</option>
+          <option value="urbain">urbain</option>
+          <option value="suburbain">suburbain</option>
+        </select>
+        <input id="q-alert-line" type="text" placeholder="line (ex: T1, 14, route_id)" />
+        <input id="q-alert-stop-id" type="text" placeholder="stop_id (optionnel)" />
+      </div>
+      <div class="row">
+        <input
+          id="q-alert-search"
+          type="text"
+          placeholder="search texte (titre, description, ligne, arrêt)"
+          style="width: 380px"
+        />
+        <input id="q-alert-effect" type="text" placeholder="effect (optionnel)" style="width: 180px" />
+        <input
+          id="q-alert-severity"
+          type="text"
+          placeholder="severity (INFO/WARNING/SEVERE)"
+          style="width: 220px"
+        />
+      </div>
+      <div class="row">
+        <label class="small">
+          <input id="q-alert-active-only" type="checkbox" checked />
+          Active only
+        </label>
+        <label class="small">
+          <input id="q-alert-refresh" type="checkbox" />
+          Force refresh
+        </label>
+      </div>
+      <div class="row">
+        <button id="btn-alerts-load">Load alerts</button>
+        <button id="btn-alerts-lines">Group by lines</button>
+        <button id="btn-alerts-stops">Group by stops</button>
+        <button id="btn-alerts-line-specific">Line specific</button>
+      </div>
+      <div id="alerts-meta-result" class="small"></div>
+      <div id="alerts-result"></div>
+    </div>
+
+    <div class="section">
+      <h2>11) Affichage lignes Tram / Bus / Bustram</h2>
+      <div class="row">
+        <select id="q-display-lines-source" style="width: 150px">
+          <option value="all" selected>all</option>
+          <option value="tram">tram</option>
+          <option value="bus">bus</option>
+          <option value="bustram">bustram</option>
+        </select>
+        <input id="q-display-lines-line" type="text" placeholder="line (ex: L2, 2, 24, A)" />
+        <input
+          id="q-display-lines-search"
+          type="text"
+          placeholder="search (nom ligne, mode, réseau...)"
+          style="width: 320px"
+        />
+      </div>
+      <div class="row">
+        <input id="q-display-lines-mode" type="text" placeholder="mode (Tramway, Bus, BHNS)" />
+        <input id="q-display-lines-network" type="text" placeholder="network (Urbain, Suburbain)" />
+        <label class="small">
+          <input id="q-display-lines-include-geometry" type="checkbox" />
+          include geometry
+        </label>
+        <label class="small">
+          <input id="q-display-lines-refresh" type="checkbox" />
+          force refresh
+        </label>
+      </div>
+      <div class="row">
+        <button id="btn-display-lines-groups">Load grouped lines</button>
+        <button id="btn-display-lines-segments">Load line segments</button>
+        <button id="btn-display-lines-geojson">Load geojson</button>
+        <button id="btn-display-lines-specific">Line specific (:line)</button>
+      </div>
+      <div id="display-lines-meta-result" class="small"></div>
+      <div id="display-lines-result"></div>
+      <div id="display-lines-map"></div>
+    </div>
+
     <script>
       // Leaflet (loaded dynamically)
       const leafletCss = document.createElement('link')
@@ -187,6 +326,12 @@
       const el = (id) => document.getElementById(id)
 
       let map, mapLayerGroup
+      let vehiclesMap, vehiclesLayerGroup
+      let displayLinesMap, displayLinesLayerGroup
+      let vehicleRefreshTimer = null
+      let vehicleRefreshIntervalMs = 20_000
+      const vehicleShapeCache = new Map()
+
       function ensureMap() {
         if (typeof globalThis !== 'undefined' && globalThis.L && !map) {
           map = L.map('map').setView([43.60735, 3.89395], 14)
@@ -195,6 +340,28 @@
             attribution: '© OpenStreetMap',
           }).addTo(map)
           mapLayerGroup = L.layerGroup().addTo(map)
+        }
+      }
+
+      function ensureVehiclesMap() {
+        if (typeof globalThis !== 'undefined' && globalThis.L && !vehiclesMap) {
+          vehiclesMap = L.map('vehicles-map').setView([43.60735, 3.89395], 12)
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap',
+          }).addTo(vehiclesMap)
+          vehiclesLayerGroup = L.layerGroup().addTo(vehiclesMap)
+        }
+      }
+
+      function ensureDisplayLinesMap() {
+        if (typeof globalThis !== 'undefined' && globalThis.L && !displayLinesMap) {
+          displayLinesMap = L.map('display-lines-map').setView([43.60735, 3.89395], 11)
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap',
+          }).addTo(displayLinesMap)
+          displayLinesLayerGroup = L.layerGroup().addTo(displayLinesMap)
         }
       }
 
@@ -420,6 +587,555 @@
         return []
       }
 
+      function sourceColor(source) {
+        return source === 'suburbain' ? '#1b9e77' : '#2563eb'
+      }
+
+      function asKmH(speed) {
+        if (speed === null || speed === undefined || Number.isNaN(Number(speed))) return null
+        return Number(speed) * 3.6
+      }
+
+      async function loadShapeByRouteId(routeId) {
+        if (!routeId) return []
+        if (vehicleShapeCache.has(routeId)) {
+          return vehicleShapeCache.get(routeId)
+        }
+        const resp = await fetchJson('/api/shape-by-route?route_id=' + encodeURIComponent(routeId))
+        const points = resp && !resp.error && Array.isArray(resp.points) ? resp.points : []
+        vehicleShapeCache.set(routeId, points)
+        return points
+      }
+
+      async function loadVehiclePositions(autoFit = true) {
+        const source = el('q-vp-source').value || 'all'
+        const line = (el('q-vp-line').value || '').trim()
+        const showShape = Boolean(el('q-vp-show-shape').checked)
+
+        const params = new URLSearchParams()
+        params.set('source', source)
+        if (line) params.set('line', line)
+
+        const data = await fetchJson('/api/vehicle-positions?' + params.toString())
+        if (data.error) {
+          el('vp-meta-result').innerText = JSON.stringify(data, null, 2)
+          el('vp-result').innerHTML = ''
+          return
+        }
+
+        const vehicles = Array.isArray(data.vehicles) ? data.vehicles : []
+        const sourceStats = Array.isArray(data.source_stats) ? data.source_stats : []
+        const errorStats = Array.isArray(data.errors) ? data.errors : []
+
+        const statsText = sourceStats
+          .map((s) => {
+            if (s.error) return `${s.source}: erreur (${s.error})`
+            return `${s.source}: ${s.vehicle_count}`
+          })
+          .join(' | ')
+
+        const refreshText =
+          vehicleRefreshTimer !== null
+            ? ` | auto refresh: ${Math.round(vehicleRefreshIntervalMs / 1000)}s`
+            : ''
+
+        el('vp-meta-result').innerHTML =
+          `<b>${vehicles.length}</b> véhicules` +
+          (line ? ` pour la ligne <b>${line}</b>` : '') +
+          (statsText ? ` | ${statsText}` : '') +
+          refreshText +
+          (errorStats.length
+            ? ` | erreurs upstream: ${errorStats.map((e) => `${e.source}`).join(', ')}`
+            : '')
+
+        renderTable(
+          el('vp-result'),
+          vehicles.map((v) => ({
+            source: v.source,
+            line: v.route_short_name || '',
+            route_id: v.route_id,
+            trip_id: v.trip_id,
+            vehicle: v.vehicle_label || v.vehicle_id,
+            speed_kmh: asKmH(v.speed) === null ? '' : asKmH(v.speed).toFixed(1),
+            stop_status: v.vehicle_stop_status,
+            updated_at: v.timestamp_iso,
+            lat: Number(v.latitude).toFixed(5),
+            lon: Number(v.longitude).toFixed(5),
+          }))
+        )
+
+        ensureVehiclesMap()
+        if (!vehiclesMap || !vehiclesLayerGroup) return
+
+        vehiclesLayerGroup.clearLayers()
+        const bounds = []
+
+        if (line && showShape) {
+          const routeIds = Array.from(
+            new Set(vehicles.map((v) => v.route_id).filter((routeId) => Boolean(routeId)))
+          )
+
+          for (const routeId of routeIds.slice(0, 3)) {
+            const points = await loadShapeByRouteId(routeId)
+            if (!points.length) continue
+
+            const latlngs = points
+              .map((p) => [Number(p.lat), Number(p.lon)])
+              .filter((pt) => Number.isFinite(pt[0]) && Number.isFinite(pt[1]))
+
+            if (!latlngs.length) continue
+
+            L.polyline(latlngs, {
+              color: '#4b5563',
+              weight: 3,
+              opacity: 0.7,
+            }).addTo(vehiclesLayerGroup)
+
+            latlngs.forEach((pt) => bounds.push(pt))
+          }
+        }
+
+        vehicles.forEach((v) => {
+          const lat = Number(v.latitude)
+          const lon = Number(v.longitude)
+          if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
+
+          const color = sourceColor(v.source)
+          const marker = L.circleMarker([lat, lon], {
+            radius: 6,
+            color,
+            fillColor: color,
+            fillOpacity: 0.9,
+            weight: 2,
+          }).addTo(vehiclesLayerGroup)
+
+          const lineLabel = v.route_short_name || v.route_id || 'unknown'
+          const vehicleLabel = v.vehicle_label || v.vehicle_id || 'n/a'
+          const speedLabel = asKmH(v.speed)
+          marker.bindPopup(
+            `<b>Ligne:</b> ${lineLabel}<br>` +
+              `<b>Véhicule:</b> ${vehicleLabel}<br>` +
+              `<b>Source:</b> ${v.source}<br>` +
+              `<b>Vitesse:</b> ${speedLabel === null ? 'n/a' : speedLabel.toFixed(1) + ' km/h'}<br>` +
+              `<b>Maj:</b> ${v.timestamp_iso || 'n/a'}`
+          )
+
+          bounds.push([lat, lon])
+        })
+
+        if (autoFit && bounds.length) {
+          const latLngBounds = L.latLngBounds(bounds)
+          vehiclesMap.fitBounds(latLngBounds.pad(0.08))
+        }
+      }
+
+      function buildAlertsCommonParams() {
+        const params = new URLSearchParams()
+
+        const source = el('q-alert-source').value || 'all'
+        const line = (el('q-alert-line').value || '').trim()
+        const stopId = (el('q-alert-stop-id').value || '').trim()
+        const search = (el('q-alert-search').value || '').trim()
+        const effect = (el('q-alert-effect').value || '').trim()
+        const severity = (el('q-alert-severity').value || '').trim()
+        const activeOnly = Boolean(el('q-alert-active-only').checked)
+        const refresh = Boolean(el('q-alert-refresh').checked)
+
+        params.set('source', source)
+        params.set('active_only', activeOnly ? 'true' : 'false')
+
+        if (line) params.set('line', line)
+        if (stopId) params.set('stop_id', stopId)
+        if (search) params.set('search', search)
+        if (effect) params.set('effect', effect)
+        if (severity) params.set('severity', severity)
+        if (refresh) params.set('refresh', 'true')
+
+        return {
+          params,
+          source,
+          line,
+          stopId,
+          search,
+          activeOnly,
+        }
+      }
+
+      function updateAlertsMeta(data, mode) {
+        const sourceStats = Array.isArray(data.source_stats) ? data.source_stats : []
+        const errorStats = Array.isArray(data.errors) ? data.errors : []
+
+        const statsText = sourceStats
+          .map((s) => {
+            const count =
+              s.alert_count !== undefined
+                ? s.alert_count
+                : s.line_count !== undefined
+                  ? s.line_count
+                  : s.stop_count !== undefined
+                    ? s.stop_count
+                    : '?'
+            if (s.error) return `${s.source}: erreur (${s.error})`
+            return `${s.source}: ${count}`
+          })
+          .join(' | ')
+
+        let primaryCount = 0
+        if (mode === 'alerts') primaryCount = Number(data.alert_count || 0)
+        if (mode === 'lines') primaryCount = Number(data.line_count || 0)
+        if (mode === 'stops') primaryCount = Number(data.stop_count || 0)
+
+        const modeLabel =
+          mode === 'alerts' ? 'alertes' : mode === 'lines' ? 'lignes impactées' : 'arrêts impactés'
+
+        el('alerts-meta-result').innerHTML =
+          `<b>${primaryCount}</b> ${modeLabel}` +
+          (statsText ? ` | ${statsText}` : '') +
+          (errorStats.length
+            ? ` | erreurs upstream: ${errorStats.map((e) => `${e.source}`).join(', ')}`
+            : '')
+      }
+
+      function renderAlertsTable(data, mode) {
+        if (mode === 'alerts') {
+          renderTable(
+            el('alerts-result'),
+            (data.alerts || []).map((a) => ({
+              source: a.source,
+              is_active: a.is_active,
+              severity: a.severity,
+              effect: a.effect,
+              line: (a.routes || [])
+                .map((r) => r.route_short_name || r.route_id)
+                .filter(Boolean)
+                .join(', '),
+              stop_count: Array.isArray(a.stops) ? a.stops.length : 0,
+              title: a.header || '',
+              description: a.description || '',
+              active_from: a.active_from_iso,
+              active_until: a.active_until_iso,
+            }))
+          )
+          return
+        }
+
+        if (mode === 'lines') {
+          renderTable(
+            el('alerts-result'),
+            (data.lines || []).map((l) => ({
+              route_short_name: l.route_short_name,
+              route_id: l.route_id,
+              route_long_name: l.route_long_name,
+              alert_count: l.alert_count,
+              active_alert_count: l.active_alert_count,
+              severities: (l.severities || []).join(', '),
+              effects: (l.effects || []).join(', '),
+              sources: (l.sources || []).join(', '),
+            }))
+          )
+          return
+        }
+
+        renderTable(
+          el('alerts-result'),
+          (data.stops || []).map((s) => ({
+            stop_id: s.stop_id,
+            stop_name: s.stop_name,
+            alert_count: s.alert_count,
+            active_alert_count: s.active_alert_count,
+            severities: (s.severities || []).join(', '),
+            effects: (s.effects || []).join(', '),
+            sources: (s.sources || []).join(', '),
+          }))
+        )
+      }
+
+      async function loadAlerts(mode) {
+        const common = buildAlertsCommonParams()
+        let url = '/api/alerts?' + common.params.toString()
+
+        if (mode === 'lines') {
+          const linesParams = new URLSearchParams()
+          linesParams.set('source', common.source)
+          linesParams.set('active_only', common.activeOnly ? 'true' : 'false')
+          if (common.search) linesParams.set('search', common.search)
+          if (common.params.get('refresh')) linesParams.set('refresh', 'true')
+          url = '/api/alerts/lines?' + linesParams.toString()
+        }
+
+        if (mode === 'stops') {
+          const stopsParams = new URLSearchParams()
+          stopsParams.set('source', common.source)
+          stopsParams.set('active_only', common.activeOnly ? 'true' : 'false')
+          if (common.search) stopsParams.set('search', common.search)
+          if (common.params.get('refresh')) stopsParams.set('refresh', 'true')
+          url = '/api/alerts/stops?' + stopsParams.toString()
+        }
+
+        if (mode === 'lineSpecific') {
+          if (!common.line) {
+            el('alerts-meta-result').innerText = 'line requise pour le test /api/alerts/line/:line'
+            el('alerts-result').innerHTML = ''
+            return
+          }
+
+          const lineParams = new URLSearchParams()
+          lineParams.set('source', common.source)
+          lineParams.set('active_only', common.activeOnly ? 'true' : 'false')
+          if (common.params.get('refresh')) lineParams.set('refresh', 'true')
+          url =
+            '/api/alerts/line/' +
+            encodeURIComponent(common.line) +
+            '?' +
+            lineParams.toString()
+        }
+
+        const data = await fetchJson(url)
+        if (data.error) {
+          el('alerts-meta-result').innerText = JSON.stringify(data, null, 2)
+          el('alerts-result').innerHTML = ''
+          return
+        }
+
+        const normalizedMode =
+          mode === 'lines' ? 'lines' : mode === 'stops' ? 'stops' : 'alerts'
+
+        updateAlertsMeta(data, normalizedMode)
+        renderAlertsTable(data, normalizedMode)
+      }
+
+      function displayLinesColorFromSource(source) {
+        if (source === 'tram') return '#ef7d00'
+        if (source === 'bus') return '#2563eb'
+        if (source === 'bustram') return '#16a34a'
+        return '#374151'
+      }
+
+      function extractLatLngLinesFromGeometry(geometry) {
+        if (!geometry || !geometry.type || !geometry.coordinates) return []
+
+        if (geometry.type === 'LineString') {
+          const line = geometry.coordinates
+            .map((point) => [Number(point[1]), Number(point[0])])
+            .filter((pt) => Number.isFinite(pt[0]) && Number.isFinite(pt[1]))
+          return line.length ? [line] : []
+        }
+
+        if (geometry.type === 'MultiLineString') {
+          return geometry.coordinates
+            .map((line) =>
+              line
+                .map((point) => [Number(point[1]), Number(point[0])])
+                .filter((pt) => Number.isFinite(pt[0]) && Number.isFinite(pt[1]))
+            )
+            .filter((line) => line.length > 0)
+        }
+
+        return []
+      }
+
+      function buildDisplayLinesFilters() {
+        const source = el('q-display-lines-source').value || 'all'
+        const line = (el('q-display-lines-line').value || '').trim()
+        const search = (el('q-display-lines-search').value || '').trim()
+        const mode = (el('q-display-lines-mode').value || '').trim()
+        const network = (el('q-display-lines-network').value || '').trim()
+        const includeGeometry = Boolean(el('q-display-lines-include-geometry').checked)
+        const refresh = Boolean(el('q-display-lines-refresh').checked)
+
+        return {
+          source,
+          line,
+          search,
+          mode,
+          network,
+          includeGeometry,
+          refresh,
+        }
+      }
+
+      function buildDisplayLinesParams(filters) {
+        const params = new URLSearchParams()
+        params.set('source', filters.source)
+        if (filters.line) params.set('line', filters.line)
+        if (filters.search) params.set('search', filters.search)
+        if (filters.mode) params.set('mode', filters.mode)
+        if (filters.network) params.set('network', filters.network)
+        if (filters.refresh) params.set('refresh', 'true')
+        return params
+      }
+
+      function updateDisplayLinesMeta(data, mode) {
+        const sourceStats = Array.isArray(data.source_stats) ? data.source_stats : []
+        const statsText = sourceStats
+          .map((s) => {
+            if (s.error) return `${s.source}: erreur (${s.error})`
+            return `${s.source}: ${s.segment_count}`
+          })
+          .join(' | ')
+
+        const errors = Array.isArray(data.errors) ? data.errors : []
+        const count =
+          mode === 'groups'
+            ? Number(data.line_count || 0)
+            : mode === 'geojson'
+              ? Number(data.feature_count || 0)
+              : Number(data.segment_count || 0)
+
+        const label =
+          mode === 'groups' ? 'lignes' : mode === 'geojson' ? 'features geojson' : 'segments'
+
+        el('display-lines-meta-result').innerHTML =
+          `<b>${count}</b> ${label}` +
+          (statsText ? ` | ${statsText}` : '') +
+          (errors.length ? ` | erreurs upstream: ${errors.map((e) => e.source).join(', ')}` : '')
+      }
+
+      function renderDisplayLinesMap(segments) {
+        ensureDisplayLinesMap()
+        if (!displayLinesMap || !displayLinesLayerGroup) return
+
+        displayLinesLayerGroup.clearLayers()
+        const bounds = []
+
+        segments.forEach((segment) => {
+          const lines = extractLatLngLinesFromGeometry(segment.geometry)
+          if (!lines.length) return
+
+          const color = segment.color || displayLinesColorFromSource(segment.source)
+          lines.forEach((line) => {
+            const polyline = L.polyline(line, {
+              color,
+              weight: 4,
+              opacity: 0.85,
+            }).addTo(displayLinesLayerGroup)
+
+            const popupText =
+              `<b>${segment.line_label || segment.line_code || 'line'}</b><br>` +
+              `source: ${segment.source}<br>` +
+              `mode: ${segment.mode || 'n/a'}<br>` +
+              `direction: ${segment.direction || 'n/a'}`
+            polyline.bindPopup(popupText)
+
+            line.forEach((pt) => bounds.push(pt))
+          })
+        })
+
+        if (bounds.length) {
+          const latLngBounds = L.latLngBounds(bounds)
+          displayLinesMap.fitBounds(latLngBounds.pad(0.06))
+        }
+      }
+
+      async function loadDisplayLines(mode) {
+        const filters = buildDisplayLinesFilters()
+        const params = buildDisplayLinesParams(filters)
+        let url = ''
+
+        if (mode === 'groups') {
+          url = '/api/display-lines/lines?' + params.toString()
+        } else if (mode === 'geojson') {
+          url = '/api/display-lines/geojson?' + params.toString()
+        } else if (mode === 'specific') {
+          if (!filters.line) {
+            el('display-lines-meta-result').innerText =
+              'line requise pour tester /api/display-lines/line/:line'
+            el('display-lines-result').innerHTML = ''
+            return
+          }
+
+          const specificParams = buildDisplayLinesParams(filters)
+          specificParams.set('include_geometry', filters.includeGeometry ? 'true' : 'false')
+          url =
+            '/api/display-lines/line/' +
+            encodeURIComponent(filters.line) +
+            '?' +
+            specificParams.toString()
+        } else {
+          params.set('include_geometry', filters.includeGeometry ? 'true' : 'false')
+          url = '/api/display-lines?' + params.toString()
+        }
+
+        const data = await fetchJson(url)
+        if (data.error) {
+          el('display-lines-meta-result').innerText = JSON.stringify(data, null, 2)
+          el('display-lines-result').innerHTML = ''
+          return
+        }
+
+        if (mode === 'groups') {
+          updateDisplayLinesMeta(data, 'groups')
+          renderTable(
+            el('display-lines-result'),
+            (data.lines || []).map((line) => ({
+              source: line.source,
+              line_label: line.line_label,
+              line_code: line.line_code,
+              line_name: line.line_name,
+              mode: line.mode,
+              network: line.network,
+              color: line.color,
+              segment_count: line.segment_count,
+              directions: (line.directions || []).join(', '),
+            }))
+          )
+          renderDisplayLinesMap([])
+          return
+        }
+
+        if (mode === 'geojson') {
+          updateDisplayLinesMeta(data, 'geojson')
+          renderTable(
+            el('display-lines-result'),
+            (data.features || []).map((feature) => ({
+              source: feature.properties?.source,
+              line_label: feature.properties?.line_label,
+              line_code: feature.properties?.line_code,
+              line_name: feature.properties?.line_name,
+              mode: feature.properties?.mode,
+              direction: feature.properties?.direction,
+              color: feature.properties?.color,
+              coordinate_count: feature.properties?.coordinate_count,
+            }))
+          )
+
+          const segments = (data.features || []).map((feature) => ({
+            ...feature.properties,
+            geometry: feature.geometry,
+          }))
+          renderDisplayLinesMap(segments)
+          return
+        }
+
+        updateDisplayLinesMeta(data, 'segments')
+        renderTable(
+          el('display-lines-result'),
+          (data.segments || []).map((segment) => ({
+            source: segment.source,
+            line_label: segment.line_label,
+            line_code: segment.line_code,
+            line_name: segment.line_name,
+            mode: segment.mode,
+            network: segment.network,
+            direction: segment.direction,
+            color: segment.color,
+            coordinate_count: segment.coordinate_count,
+          }))
+        )
+
+        const canDraw = Array.isArray(data.segments)
+        if (canDraw) {
+          renderDisplayLinesMap(data.segments)
+        }
+      }
+
+      function stopVehicleRefresh() {
+        if (vehicleRefreshTimer) {
+          clearInterval(vehicleRefreshTimer)
+          vehicleRefreshTimer = null
+        }
+      }
+
       el('btn-show-shape').addEventListener('click', async () => {
         const sel = el('shapes-select')
         if (!sel || !sel.value) return
@@ -509,6 +1225,39 @@
           }))
         )
       })
+
+      el('btn-vp-load').addEventListener('click', async () => {
+        await loadVehiclePositions(true)
+      })
+
+      el('btn-vp-refresh-start').addEventListener('click', async () => {
+        const refreshSeconds = Number.parseInt(el('q-vp-refresh-seconds').value || '20', 10)
+        vehicleRefreshIntervalMs =
+          Number.isNaN(refreshSeconds) || refreshSeconds < 5 ? 20_000 : refreshSeconds * 1000
+
+        stopVehicleRefresh()
+        await loadVehiclePositions(true)
+        vehicleRefreshTimer = setInterval(() => {
+          loadVehiclePositions(false)
+        }, vehicleRefreshIntervalMs)
+      })
+
+      el('btn-vp-refresh-stop').addEventListener('click', () => {
+        stopVehicleRefresh()
+        loadVehiclePositions(false)
+      })
+
+      el('btn-alerts-load').addEventListener('click', () => loadAlerts('alerts'))
+      el('btn-alerts-lines').addEventListener('click', () => loadAlerts('lines'))
+      el('btn-alerts-stops').addEventListener('click', () => loadAlerts('stops'))
+      el('btn-alerts-line-specific').addEventListener('click', () => loadAlerts('lineSpecific'))
+
+      el('btn-display-lines-groups').addEventListener('click', () => loadDisplayLines('groups'))
+      el('btn-display-lines-segments').addEventListener('click', () => loadDisplayLines('segments'))
+      el('btn-display-lines-geojson').addEventListener('click', () => loadDisplayLines('geojson'))
+      el('btn-display-lines-specific').addEventListener('click', () => loadDisplayLines('specific'))
+
+      window.addEventListener('beforeunload', () => stopVehicleRefresh())
 
       // Auto-run initial search
       document.addEventListener('DOMContentLoaded', () => el('btn-find-stops').click())
