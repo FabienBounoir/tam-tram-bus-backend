@@ -1,4 +1,15 @@
 import Database from '@adonisjs/lucid/services/db'
+import { DateTime } from 'luxon'
+
+/**
+ * Timezone of the transit agency (Montpellier / TaM).
+ *
+ * GTFS `arrival_time` / `departure_time` values are wall-clock times expressed in this
+ * timezone (and can exceed 24:00:00 for trips that run past midnight). All conversions to
+ * absolute UTC instants MUST go through this zone so the result is correct regardless of the
+ * server's own timezone (the container runs with TZ=UTC).
+ */
+export const AGENCY_TIMEZONE = 'Europe/Paris'
 
 function unwrapRows(result: any): any[] {
   if (Array.isArray(result)) return result
@@ -23,6 +34,80 @@ export function timeToSeconds(t?: string | null): number | null {
   const m = Number.parseInt(parts[1], 10) || 0
   const s = Number.parseInt(parts[2], 10) || 0
   return h * 3600 + m * 60 + s
+}
+
+/**
+ * Resolve a service date (YYYYMMDD) + seconds-since-service-midnight into an absolute instant,
+ * interpreting the wall clock in the agency timezone. Luxon handles DST transitions and times
+ * that overflow past 24:00:00 (e.g. a 25:10:00 departure) correctly.
+ */
+function serviceMidnightPlusSeconds(
+  totalSeconds: number | null,
+  serviceYmd: string
+): DateTime | null {
+  if (totalSeconds === null) return null
+  if (!serviceYmd || String(serviceYmd).length !== 8) return null
+  const y = Number.parseInt(String(serviceYmd).slice(0, 4), 10)
+  const m = Number.parseInt(String(serviceYmd).slice(4, 6), 10)
+  const d = Number.parseInt(String(serviceYmd).slice(6, 8), 10)
+  if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(d)) return null
+
+  const midnight = DateTime.fromObject(
+    { year: y, month: m, day: d },
+    { zone: AGENCY_TIMEZONE }
+  )
+  if (!midnight.isValid) return null
+
+  return midnight.plus({ seconds: totalSeconds })
+}
+
+export function secondsSinceServiceMidnightToIsoUtc(
+  totalSeconds: number | null,
+  serviceYmd: string
+): string | null {
+  const target = serviceMidnightPlusSeconds(totalSeconds, serviceYmd)
+  return target ? target.toUTC().toISO({ suppressMilliseconds: true }) : null
+}
+
+export function secondsSinceServiceMidnightToEpochUtc(
+  totalSeconds: number | null,
+  serviceYmd: string
+): number | null {
+  const target = serviceMidnightPlusSeconds(totalSeconds, serviceYmd)
+  return target ? Math.floor(target.toSeconds()) : null
+}
+
+/**
+ * Current moment expressed in the agency timezone, independent of the server's own TZ.
+ *
+ * Returns the service date (YYYYMMDD) and the number of seconds elapsed since local midnight,
+ * which is what schedule comparisons need (GTFS times are seconds since service midnight).
+ */
+export function nowInAgencyTimezone(): {
+  ymd: string
+  secondsSinceMidnight: number
+  dateTime: DateTime
+} {
+  const now = DateTime.now().setZone(AGENCY_TIMEZONE)
+  const secondsSinceMidnight =
+    now.hour * 3600 + now.minute * 60 + now.second
+  return { ymd: now.toFormat('yyyyMMdd'), secondsSinceMidnight, dateTime: now }
+}
+
+/** Add `days` to a YYYYMMDD service date, staying in the agency timezone. */
+export function shiftServiceYmd(ymd: string, days: number): string {
+  const y = Number.parseInt(ymd.slice(0, 4), 10)
+  const m = Number.parseInt(ymd.slice(4, 6), 10)
+  const d = Number.parseInt(ymd.slice(6, 8), 10)
+  return DateTime.fromObject({ year: y, month: m, day: d }, { zone: AGENCY_TIMEZONE })
+    .plus({ days })
+    .toFormat('yyyyMMdd')
+}
+
+export function epochUtcToIso(epochSeconds: number | null): string | null {
+  if (epochSeconds === null) return null
+  const date = new Date(epochSeconds * 1000)
+  return date.toISOString()
 }
 
 export async function getActiveServiceIds(ymd: string): Promise<string[]> {

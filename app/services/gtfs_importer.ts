@@ -24,6 +24,9 @@ export async function runImport(): Promise<void> {
   const config = await loadConfig()
   try {
     await importGtfs(config)
+    // Absolute UTC timestamps are derived on the fly from arrival_time/departure_time and the
+    // relevant service date (see gtfs_service + the controller), so no post-processing is needed
+    // here. The previous implementation tried to UPDATE non-existent columns and always failed.
   } finally {
     importRunning = false
   }

@@ -4,6 +4,9 @@ import {
   generateShapesFromTrips,
   getActiveServiceIds,
   timeToSeconds,
+  secondsSinceServiceMidnightToIsoUtc,
+  nowInAgencyTimezone,
+  shiftServiceYmd,
 } from '#services/gtfs_service'
 import {
   getVehicleLines,
@@ -190,23 +193,21 @@ export default class GtfsController {
     const limit = Number.parseInt(request.input('limit') || '10', 10)
     if (!stopId) return response.badRequest({ error: 'stop_id query param required' })
 
-    const now = new Date()
-    const nowUnix = Math.floor(now.getTime() / 1000)
-    const formatYmd = (date: Date) => {
-      const y = date.getFullYear()
-      const m = String(date.getMonth() + 1).padStart(2, '0')
-      const d = String(date.getDate()).padStart(2, '0')
-      return `${y}${m}${d}`
-    }
-    const ymdToday = formatYmd(now)
-    const tomorrow = new Date(now)
-    tomorrow.setDate(tomorrow.getDate() + 1)
-    const ymdTomorrow = formatYmd(tomorrow)
+    // Anchor "now" to the agency timezone (Europe/Paris), not the server clock (TZ=UTC),
+    // so the service date and the seconds-since-midnight comparison match GTFS schedule times.
+    const { ymd: ymdToday, secondsSinceMidnight: currentSeconds } = nowInAgencyTimezone()
+    const nowUnix = Math.floor(Date.now() / 1000)
+    const ymdTomorrow = shiftServiceYmd(ymdToday, 1)
+    const ymdYesterday = shiftServiceYmd(ymdToday, -1)
 
-    const currentSeconds = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds()
+    // Yesterday's services matter too: GTFS trips that run past midnight (e.g. 25:10:00) belong to
+    // the previous service day but actually depart in the early hours of today.
+    const yesterdayServiceIds = await getActiveServiceIds(ymdYesterday)
     const todayServiceIds = await getActiveServiceIds(ymdToday)
     const tomorrowServiceIds = await getActiveServiceIds(ymdTomorrow)
-    const allServiceIds = Array.from(new Set([...todayServiceIds, ...tomorrowServiceIds]))
+    const allServiceIds = Array.from(
+      new Set([...yesterdayServiceIds, ...todayServiceIds, ...tomorrowServiceIds])
+    )
 
     if (!allServiceIds.length) {
       return response.ok({ departures: [] })
@@ -250,6 +251,7 @@ export default class GtfsController {
       return sign < 0 ? `-${base}` : base
     }
 
+    const yesterdayServiceSet = new Set(yesterdayServiceIds)
     const todayServiceSet = new Set(todayServiceIds)
     const tomorrowServiceSet = new Set(tomorrowServiceIds)
 
@@ -270,9 +272,12 @@ export default class GtfsController {
             ? (r.arrival_seconds as number) + delaySeconds
             : r.arrival_seconds
 
-        const candidates: any[] = []
+        // Each candidate places the trip on a single timeline (seconds since *today's* Paris
+        // midnight) for filtering/sorting via `timeline_offset`, while `service_ymd` keeps the
+        // trip's real service date for computing absolute UTC instants.
+        const candidates: { timeline_offset: number; service_ymd: string }[] = []
         if (todayServiceSet.has(r.service_id)) {
-          candidates.push({ day_offset: 0 })
+          candidates.push({ timeline_offset: 0, service_ymd: ymdToday })
         }
 
         if (
@@ -280,26 +285,62 @@ export default class GtfsController {
           r.departure_seconds !== null &&
           (r.departure_seconds as number) < 24 * 3600
         ) {
-          candidates.push({ day_offset: 24 * 3600 })
+          candidates.push({ timeline_offset: 24 * 3600, service_ymd: ymdTomorrow })
+        }
+
+        if (
+          yesterdayServiceSet.has(r.service_id) &&
+          r.departure_seconds !== null &&
+          (r.departure_seconds as number) >= 24 * 3600
+        ) {
+          candidates.push({ timeline_offset: -24 * 3600, service_ymd: ymdYesterday })
         }
 
         return candidates.map((candidate) => {
           const realtimeDepartureSeconds =
             baseRealtimeDepartureSeconds === null
               ? null
-              : baseRealtimeDepartureSeconds + candidate.day_offset
+              : baseRealtimeDepartureSeconds + candidate.timeline_offset
           const realtimeArrivalSeconds =
             baseRealtimeArrivalSeconds === null
               ? null
-              : baseRealtimeArrivalSeconds + candidate.day_offset
+              : baseRealtimeArrivalSeconds + candidate.timeline_offset
+
+          const scheduledDepartureSeconds =
+            r.departure_seconds === null
+              ? null
+              : (r.departure_seconds as number) + candidate.timeline_offset
+          const scheduledArrivalSeconds =
+            r.arrival_seconds === null
+              ? null
+              : (r.arrival_seconds as number) + candidate.timeline_offset
 
           return {
             ...r,
             delay_seconds: delaySeconds,
+            scheduled_departure_seconds: scheduledDepartureSeconds,
+            scheduled_arrival_seconds: scheduledArrivalSeconds,
+            // UTC instants use the original GTFS seconds anchored to the trip's own service date.
+            scheduled_departure_time_utc: secondsSinceServiceMidnightToIsoUtc(
+              r.departure_seconds,
+              candidate.service_ymd
+            ),
+            scheduled_arrival_time_utc: secondsSinceServiceMidnightToIsoUtc(
+              r.arrival_seconds,
+              candidate.service_ymd
+            ),
             realtime_departure_seconds: realtimeDepartureSeconds,
             realtime_arrival_seconds: realtimeArrivalSeconds,
             realtime_departure_time: formatSeconds(realtimeDepartureSeconds),
             realtime_arrival_time: formatSeconds(realtimeArrivalSeconds),
+            realtime_departure_time_utc: secondsSinceServiceMidnightToIsoUtc(
+              baseRealtimeDepartureSeconds,
+              candidate.service_ymd
+            ),
+            realtime_arrival_time_utc: secondsSinceServiceMidnightToIsoUtc(
+              baseRealtimeArrivalSeconds,
+              candidate.service_ymd
+            ),
             realtime_updated: delaySeconds !== null && delaySeconds !== 0,
           }
         })
@@ -358,6 +399,9 @@ export default class GtfsController {
     }
 
     const nowUnix = Math.floor(Date.now() / 1000)
+    // A trip_id can run on many service dates; anchor the absolute UTC timestamps to today's
+    // service date in the agency timezone so they are coherent for the current run.
+    const { ymd: serviceYmd } = nowInAgencyTimezone()
 
     const sql = `SELECT st.trip_id, st.stop_id, st.stop_sequence, st.arrival_time, st.departure_time,
         s.stop_name,
@@ -426,10 +470,20 @@ export default class GtfsController {
         departure_time: row.departure_time,
         arrival_seconds: arrivalSeconds,
         departure_seconds: departureSeconds,
+        arrival_time_utc: secondsSinceServiceMidnightToIsoUtc(arrivalSeconds, serviceYmd),
+        departure_time_utc: secondsSinceServiceMidnightToIsoUtc(departureSeconds, serviceYmd),
         realtime_arrival_time: formatSeconds(realtimeArrivalSeconds),
         realtime_departure_time: formatSeconds(realtimeDepartureSeconds),
         realtime_arrival_seconds: realtimeArrivalSeconds,
         realtime_departure_seconds: realtimeDepartureSeconds,
+        realtime_arrival_time_utc: secondsSinceServiceMidnightToIsoUtc(
+          realtimeArrivalSeconds,
+          serviceYmd
+        ),
+        realtime_departure_time_utc: secondsSinceServiceMidnightToIsoUtc(
+          realtimeDepartureSeconds,
+          serviceYmd
+        ),
         arrival_delay_seconds: arrivalDelay,
         departure_delay_seconds: departureDelay,
         delay_seconds: fallbackDelay,
@@ -510,15 +564,13 @@ export default class GtfsController {
               to_stop_name: toStop.stop_name,
               to_stop_sequence: toStop.stop_sequence,
               scheduled_travel_seconds: scheduledTravelSeconds,
+              // Whole minutes: the journey duration is shown as an integer "X min" by the client,
+              // and the client model decodes these as integers.
               scheduled_travel_minutes:
-                scheduledTravelSeconds === null
-                  ? null
-                  : Number((scheduledTravelSeconds / 60).toFixed(1)),
+                scheduledTravelSeconds === null ? null : Math.round(scheduledTravelSeconds / 60),
               realtime_travel_seconds: realtimeTravelSeconds,
               realtime_travel_minutes:
-                realtimeTravelSeconds === null
-                  ? null
-                  : Number((realtimeTravelSeconds / 60).toFixed(1)),
+                realtimeTravelSeconds === null ? null : Math.round(realtimeTravelSeconds / 60),
               delta_seconds:
                 scheduledTravelSeconds === null || realtimeTravelSeconds === null
                   ? null

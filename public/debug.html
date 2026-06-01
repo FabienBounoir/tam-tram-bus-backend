@@ -482,7 +482,25 @@
             encodeURIComponent(lim)
         )
         if (data.error) el('next-result').innerText = JSON.stringify(data, null, 2)
-        else renderTable(el('next-result'), data.departures)
+        else
+          renderTable(
+            el('next-result'),
+            data.departures.map((d) => ({
+              trip_id: d.trip_id,
+              route: d.route_short_name || d.route_id,
+              headsign: d.trip_headsign,
+              dep_theorique: d.departure_time,
+              dep_theorique_utc: d.departure_time_utc,
+              arr_theorique: d.arrival_time,
+              arr_theorique_utc: d.arrival_time_utc,
+              dep_realtime: d.realtime_departure_time,
+              dep_realtime_utc: d.realtime_departure_time_utc,
+              arr_realtime: d.realtime_arrival_time,
+              arr_realtime_utc: d.realtime_arrival_time_utc,
+              delay_min: d.delay_minutes,
+              realtime_updated: d.realtime_updated,
+            }))
+          )
       })
 
       el('btn-stops-near').addEventListener('click', async () => {
@@ -1216,9 +1234,13 @@
             stop_id: s.stop_id,
             stop_name: s.stop_name,
             arr_theorique: s.arrival_time,
+            arr_theorique_utc: s.arrival_time_utc,
             dep_theorique: s.departure_time,
+            dep_theorique_utc: s.departure_time_utc,
             arr_realtime: s.realtime_arrival_time,
+            arr_realtime_utc: s.realtime_arrival_time_utc,
             dep_realtime: s.realtime_departure_time,
+            dep_realtime_utc: s.realtime_departure_time_utc,
             delay_sec: s.delay_seconds,
             delay_min: s.delay_minutes,
             realtime_updated: s.realtime_updated,
